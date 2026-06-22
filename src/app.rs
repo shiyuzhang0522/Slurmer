@@ -1,8 +1,8 @@
-use color_eyre::Result;
+use color_eyre::{eyre::WrapErr, Result};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent};
 use ratatui::{
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::Line,
     widgets::{Block, Borders, Clear, Paragraph},
     Frame,
@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 
 use crate::{
+    config::Preferences,
     slurm::{
         command::{execute_scancel, get_partitions, get_qos},
         squeue::{run_squeue, SqueueOptions},
@@ -24,6 +25,8 @@ use crate::{
         jobslist::JobsList,
         layout::{centered_popup_area, draw_footer, draw_header, draw_main_layout},
         logview::LogView,
+        settings::{SettingsAction, SettingsPopup},
+        theme::{Palette, Theme},
     },
     utils::{
         event::{Event as AppEvent, EventConfig, EventHandler},
@@ -72,6 +75,11 @@ pub struct App {
     pub sort_columns: Vec<SortColumn>,
     /// Confirm cancel popup state
     cancel_confirm: bool,
+    settings_popup: SettingsPopup,
+    theme: Theme,
+    search_mode: bool,
+    search_query: String,
+    filter_backup: Option<SqueueOptions>,
 }
 
 impl App {
@@ -80,7 +88,8 @@ impl App {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
-            .expect("Failed to create Tokio runtime");
+            .wrap_err("failed to create Tokio runtime")?;
+        let preferences = Preferences::load();
 
         // Default username for squeue
         let username = get_username();
@@ -90,16 +99,19 @@ impl App {
         };
 
         // Get available partitions and QOS
-        let available_partitions = runtime.block_on(async { get_partitions().await })?;
-        let available_qos = runtime.block_on(async { get_qos().await })?;
+        let available_partitions = runtime
+            .block_on(async { get_partitions().await })
+            .unwrap_or_default();
+        let available_qos = runtime
+            .block_on(async { get_qos().await })
+            .unwrap_or_default();
         let available_states = JobState::get_available_states();
 
         // Default columns and sort options
-        let selected_columns = JobColumn::defaults();
-        let sort_columns = vec![SortColumn {
-            column: JobColumn::Id,
-            order: SortOrder::Ascending,
-        }];
+        let selected_columns = preferences.selected_columns;
+        let sort_columns = preferences.sort_columns;
+        let theme = preferences.theme;
+        let job_refresh_interval = preferences.refresh_interval;
 
         Ok(Self {
             running: true,
@@ -114,14 +126,23 @@ impl App {
             script_view: JobScript::new(),
             status_message: String::new(),
             status_timeout: None,
-            job_refresh_interval: 10, // Default to 10 seconds refresh
+            job_refresh_interval,
             available_partitions,
             available_qos,
             available_states,
             selected_columns,
             sort_columns,
             cancel_confirm: false,
+            settings_popup: SettingsPopup::new(theme, job_refresh_interval),
+            theme,
+            search_mode: false,
+            search_query: String::new(),
+            filter_backup: None,
         })
+    }
+
+    fn palette(&self) -> Palette {
+        self.theme.palette()
     }
 
     /// Run the application's main loop
@@ -129,8 +150,9 @@ impl App {
         &mut self,
         terminal: &mut ratatui::Terminal<B>,
     ) -> Result<()> {
-        // Initial job loading
-        self.refresh_jobs()?;
+        if let Err(error) = self.refresh_jobs() {
+            self.set_status_message(format!("Initial refresh failed: {error}"), 8);
+        }
 
         while self.running {
             terminal.draw(|frame| self.render(frame))?;
@@ -247,6 +269,11 @@ impl App {
 
     /// Render the application UI
     pub fn render(&mut self, frame: &mut Frame) {
+        let palette = self.palette();
+        frame.render_widget(
+            Block::default().style(Style::default().bg(palette.background)),
+            frame.area(),
+        );
         let areas = draw_main_layout(frame);
 
         // Draw header with status information
@@ -289,29 +316,50 @@ impl App {
             let popup_area = centered_popup_area(frame.area(), 50, 30);
             self.render_cancel_confirm(frame, popup_area);
         }
+
+        if self.settings_popup.visible {
+            let popup_area = centered_popup_area(frame.area(), 60, 45);
+            self.settings_popup.render(frame, popup_area, palette);
+        }
+
+        if self.search_mode {
+            let popup_area = Rect::new(
+                frame.area().x + frame.area().width / 5,
+                frame.area().y + 3,
+                frame.area().width.saturating_mul(3) / 5,
+                3,
+            );
+            self.render_search(frame, popup_area);
+        }
     }
 
     /// Render the joblist
     fn render_joblist(&mut self, frame: &mut Frame, area: Rect) {
-        // Draw the jobs list in the main content area with current column settings
-        self.jobs_list
-            .render(frame, area, &self.selected_columns, &self.sort_columns);
+        let palette = self.palette();
+        self.jobs_list.render(
+            frame,
+            area,
+            &self.selected_columns,
+            &self.sort_columns,
+            palette,
+        );
     }
 
     /// Render the columns management popup
     fn render_columns_popup(&mut self, frame: &mut Frame, area: Rect) {
-        // Render the columns management popup
-        self.columns_popup.render(frame, area);
+        let palette = self.palette();
+        self.columns_popup.render(frame, area, palette);
     }
 
     /// Render the log view
     fn render_log_view(&mut self, frame: &mut Frame, area: Rect) {
-        // Render the log view if it's visible
-        self.log_view.render(frame, area);
+        let palette = self.palette();
+        self.log_view.render(frame, area, palette);
     }
 
     /// Render the filter popup
     fn render_filter_popup(&mut self, frame: &mut Frame, area: Rect) {
+        let palette = self.palette();
         self.filter_popup.render(
             frame,
             area,
@@ -319,12 +367,13 @@ impl App {
             &self.available_states,
             &self.available_partitions,
             &self.available_qos,
+            palette,
         );
     }
 
     /// Render job detail popup
     fn render_job_script(&self, frame: &mut Frame, area: Rect) {
-        self.script_view.render(frame, area);
+        self.script_view.render(frame, area, self.palette());
     }
 
     /// Render the footer with XXX TODO:replace it
@@ -346,7 +395,7 @@ impl App {
         let job_stat = (pending_count, running_count, other_count);
 
         // Draw the footer
-        draw_footer(frame, area, job_stat);
+        draw_footer(frame, area, job_stat, self.palette());
     }
 
     /// Render the header with status information
@@ -382,6 +431,12 @@ impl App {
             &status_text,
             self.last_refresh.elapsed(),
             self.job_refresh_interval,
+            (!self.search_query.is_empty()).then_some((
+                self.search_query.as_str(),
+                self.jobs_list.jobs.len(),
+                self.jobs_list.total_count(),
+            )),
+            self.palette(),
         );
     }
 
@@ -400,15 +455,38 @@ impl App {
 
         let block = Block::default()
             .title(Line::from("Confirm Cancel").centered())
-            .borders(Borders::NONE)
-            .style(Style::default().bg(Color::Black));
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(self.palette().danger))
+            .style(
+                Style::default()
+                    .bg(self.palette().surface)
+                    .fg(self.palette().text),
+            );
 
         let cancel_popup = Paragraph::new(cancel_text)
-            .style(Style::default().fg(Color::Cyan))
+            .style(Style::default().fg(self.palette().accent))
             .block(block)
             .centered();
 
         frame.render_widget(cancel_popup, area);
+    }
+
+    fn render_search(&self, frame: &mut Frame, area: Rect) {
+        let palette = self.palette();
+        frame.render_widget(Clear, area);
+        let search = Paragraph::new(format!("/{}", self.search_query))
+            .style(Style::default().fg(palette.text).bg(palette.surface))
+            .block(
+                Block::default()
+                    .title(" Fuzzy search · Enter keep · Esc clear ")
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(palette.accent)),
+            );
+        frame.render_widget(search, area);
+        frame.set_cursor_position(ratatui::layout::Position::new(
+            area.x + 2 + self.search_query.chars().count() as u16,
+            area.y + 1,
+        ));
     }
 
     /// Handle application events
@@ -418,6 +496,9 @@ impl App {
             AppEvent::Mouse(mouse) => self.handle_mouse_event(mouse),
             AppEvent::Resize(_, _) => {}
             AppEvent::Tick => self.handle_tick(),
+            AppEvent::Error => {
+                return Err(color_eyre::eyre::eyre!("terminal event reader stopped"))
+            }
             _ => {}
         }
 
@@ -426,15 +507,72 @@ impl App {
 
     /// Handle key events
     fn handle_key_event(&mut self, key: KeyEvent) {
+        if self.search_mode {
+            match key.code {
+                KeyCode::Esc => {
+                    self.search_mode = false;
+                    self.search_query.clear();
+                    self.jobs_list.set_search_query(String::new());
+                }
+                KeyCode::Enter => self.search_mode = false,
+                KeyCode::Backspace => {
+                    self.search_query.pop();
+                    self.jobs_list.set_search_query(self.search_query.clone());
+                }
+                KeyCode::Char(character)
+                    if !key.modifiers.contains(KeyModifiers::CONTROL)
+                        && !key.modifiers.contains(KeyModifiers::ALT) =>
+                {
+                    self.search_query.push(character);
+                    self.jobs_list.set_search_query(self.search_query.clone());
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        if self.settings_popup.visible {
+            match self.settings_popup.handle_key(key) {
+                SettingsAction::Close => self.settings_popup.visible = false,
+                SettingsAction::Apply {
+                    theme,
+                    refresh_interval,
+                } => {
+                    self.theme = theme;
+                    self.job_refresh_interval = refresh_interval;
+                    self.settings_popup.visible = false;
+                    self.save_preferences();
+                    self.set_status_message(
+                        format!(
+                            "Settings saved: {} theme, {}s refresh",
+                            theme.label(),
+                            refresh_interval
+                        ),
+                        3,
+                    );
+                }
+                SettingsAction::None => {}
+            }
+            return;
+        }
+
         match (key.modifiers, key.code) {
             // Quit application
             (_, KeyCode::Esc) | (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
-                if self.filter_popup.visible
+                if !self.search_query.is_empty() {
+                    self.search_query.clear();
+                    self.jobs_list.set_search_query(String::new());
+                } else if self.filter_popup.visible
                     || self.script_view.visible
                     || self.columns_popup.visible
                     || self.log_view.visible
                     || self.cancel_confirm
                 {
+                    if self.filter_popup.visible {
+                        if let Some(options) = self.filter_backup.take() {
+                            self.squeue_options = options;
+                        }
+                    }
                     self.filter_popup.visible = false;
                     self.script_view.visible = false;
                     self.columns_popup.visible = false;
@@ -445,8 +583,36 @@ impl App {
                 }
             }
 
+            (_, KeyCode::Char('/'))
+                if !self.filter_popup.visible
+                    && !self.script_view.visible
+                    && !self.columns_popup.visible
+                    && !self.log_view.visible
+                    && !self.cancel_confirm =>
+            {
+                self.search_mode = true;
+            }
+
+            (_, KeyCode::Char('s'))
+                if !self.filter_popup.visible
+                    && !self.script_view.visible
+                    && !self.columns_popup.visible
+                    && !self.log_view.visible
+                    && !self.cancel_confirm =>
+            {
+                self.settings_popup
+                    .open(self.theme, self.job_refresh_interval);
+            }
+
             // Filter toggle
-            (_, KeyCode::Char('f')) if !self.script_view.visible && !self.filter_popup.visible => {
+            (_, KeyCode::Char('f'))
+                if !self.script_view.visible
+                    && !self.filter_popup.visible
+                    && !self.columns_popup.visible
+                    && !self.log_view.visible
+                    && !self.cancel_confirm =>
+            {
+                self.filter_backup = Some(self.squeue_options.clone());
                 self.filter_popup.visible = true;
                 // Initialize filter popup with current options
                 self.filter_popup.initialize(&self.squeue_options);
@@ -474,14 +640,18 @@ impl App {
             (_, KeyCode::Char(' '))
                 if !self.filter_popup.visible
                     && !self.script_view.visible
-                    && !self.columns_popup.visible =>
+                    && !self.columns_popup.visible
+                    && !self.log_view.visible
+                    && !self.cancel_confirm =>
             {
                 self.jobs_list.toggle_select();
             }
             (_, KeyCode::Char('a'))
                 if !self.filter_popup.visible
                     && !self.script_view.visible
-                    && !self.columns_popup.visible =>
+                    && !self.columns_popup.visible
+                    && !self.log_view.visible
+                    && !self.cancel_confirm =>
             {
                 // if all jobs are selected, deselect all
                 if self.jobs_list.all_selected() {
@@ -494,7 +664,9 @@ impl App {
             (_, KeyCode::Char('x'))
                 if !self.filter_popup.visible
                     && !self.script_view.visible
-                    && !self.columns_popup.visible =>
+                    && !self.columns_popup.visible
+                    && !self.log_view.visible
+                    && !self.cancel_confirm =>
             {
                 // scancel the selected jobs and remove them
                 self.cancel_confirm = true;
@@ -524,6 +696,7 @@ impl App {
                 if !self.filter_popup.visible
                     && !self.script_view.visible
                     && !self.columns_popup.visible
+                    && !self.log_view.visible
                     && !self.cancel_confirm =>
             {
                 self.columns_popup =
@@ -543,33 +716,13 @@ impl App {
 
                 match action {
                     FilterAction::Close => {
-                        self.filter_popup.visible = false;
-                    }
-                    FilterAction::Apply => {
-                        self.filter_popup.visible = false;
-                        if let Err(e) = self.apply_filters() {
-                            self.set_status_message(format!("Failed to apply filters: {}", e), 3);
+                        if let Some(options) = self.filter_backup.take() {
+                            self.squeue_options = options;
                         }
-                    }
-                    FilterAction::None => {}
-                }
-            }
-
-            // Handle filter popup key events
-            _ if self.filter_popup.visible => {
-                let action = self.filter_popup.handle_key(
-                    key,
-                    &mut self.squeue_options,
-                    &self.available_states,
-                    &self.available_partitions,
-                    &self.available_qos,
-                );
-
-                match action {
-                    FilterAction::Close => {
                         self.filter_popup.visible = false;
                     }
                     FilterAction::Apply => {
+                        self.filter_backup = None;
                         self.filter_popup.visible = false;
                         if let Err(e) = self.apply_filters() {
                             self.set_status_message(format!("Failed to apply filters: {}", e), 3);
@@ -670,6 +823,7 @@ impl App {
                         self.columns_popup.visible = false;
                         self.selected_columns = self.columns_popup.selected_columns.clone();
                         self.sort_columns = self.columns_popup.sort_columns.clone();
+                        self.save_preferences();
 
                         // Update the format and refresh
                         if let Err(e) = self.refresh_jobs() {
@@ -682,8 +836,7 @@ impl App {
                         self.columns_popup.visible = false;
                         self.selected_columns = self.columns_popup.selected_columns.clone();
                         self.sort_columns = self.columns_popup.sort_columns.clone();
-
-                        // TODO: Save settings to config file
+                        self.save_preferences();
                         self.set_status_message("Column settings saved and applied".to_string(), 3);
 
                         // Update the format and refresh
@@ -722,6 +875,7 @@ impl App {
         if !self.filter_popup.visible
             && !self.script_view.visible
             && !self.columns_popup.visible
+            && !self.settings_popup.visible
             && self.last_refresh.elapsed().as_secs() >= self.job_refresh_interval
         {
             if let Err(e) = self.refresh_jobs() {
@@ -739,6 +893,18 @@ impl App {
     fn set_status_message(&mut self, message: String, duration_secs: u64) {
         self.status_message = message;
         self.status_timeout = Some(Instant::now() + Duration::from_secs(duration_secs));
+    }
+
+    fn save_preferences(&mut self) {
+        let preferences = Preferences {
+            theme: self.theme,
+            refresh_interval: self.job_refresh_interval,
+            selected_columns: self.selected_columns.clone(),
+            sort_columns: self.sort_columns.clone(),
+        };
+        if let Err(error) = preferences.save() {
+            self.set_status_message(format!("Could not save preferences: {error}"), 4);
+        }
     }
 
     /// Set the auto-refresh interval in seconds
@@ -862,7 +1028,7 @@ impl App {
                 // add to the squeue options
                 self.squeue_options
                     .sorts
-                    .insert(sort_code.to_string(), is_ascending);
+                    .push((sort_code.to_string(), is_ascending));
             }
 
             // Set the first sort column as the primary sort
@@ -880,7 +1046,7 @@ impl App {
                 self.jobs_list.sort_ascending = matches!(first_sort.order, SortOrder::Ascending);
             }
         } else {
-            self.squeue_options.sorts.insert("i".to_string(), true);
+            self.squeue_options.sorts.push(("i".to_string(), true));
             self.jobs_list.sort_column = 0;
             self.jobs_list.sort_ascending = true;
         }
@@ -890,9 +1056,13 @@ impl App {
         // Get selected job IDs
         let selected_jobs = self.jobs_list.get_selected_jobs();
         let selecteed_count = selected_jobs.len();
-        let _ = self
+        if let Err(error) = self
             .runtime
-            .block_on(async { execute_scancel(selected_jobs).await });
+            .block_on(async { execute_scancel(selected_jobs).await })
+        {
+            self.set_status_message(format!("Cancellation failed: {error}"), 5);
+            return;
+        }
         // refresh the jobs list after cancellation
         if let Err(e) = self.refresh_jobs() {
             self.set_status_message(format!("Failed to refresh after cancel: {}", e), 3);

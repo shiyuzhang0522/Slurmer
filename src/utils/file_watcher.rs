@@ -8,7 +8,7 @@ use std::{
 };
 
 use crossbeam::{
-    channel::{unbounded, Receiver, RecvError, SendError, Sender},
+    channel::{unbounded, Receiver, Sender},
     select,
 };
 use notify::{event::ModifyKind, RecursiveMode, Watcher};
@@ -30,6 +30,7 @@ struct FileWatcher {
     file_path: Option<PathBuf>,
     interval: Duration,
 }
+
 pub enum FileWatcherMessage {
     FilePath(Option<PathBuf>),
 }
@@ -39,6 +40,7 @@ pub struct FileWatcherHandle {
     file_path: Option<PathBuf>,
 }
 
+#[derive(Debug)]
 pub enum FileWatcherError {
     Watcher(notify::Error),
     File(io::Error),
@@ -47,8 +49,8 @@ pub enum FileWatcherError {
 impl fmt::Display for FileWatcherError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            FileWatcherError::Watcher(e) => write!(f, "Watcher error: {}", e),
-            FileWatcherError::File(e) => write!(f, "Read error: {}", e),
+            FileWatcherError::Watcher(error) => write!(f, "Watcher error: {error}"),
+            FileWatcherError::File(error) => write!(f, "Read error: {error}"),
         }
     }
 }
@@ -59,61 +61,86 @@ impl FileWatcher {
         receiver: Receiver<FileWatcherMessage>,
         interval: Duration,
     ) -> Self {
-        FileWatcher {
-            app: app,
-            receiver: receiver,
+        Self {
+            app,
+            receiver,
             file_path: None,
-            interval: interval,
+            interval,
         }
     }
 
-    fn run(&mut self) -> Result<(), RecvError> {
+    fn run(&mut self) {
         let (watch_sender, watch_receiver) = unbounded();
-        let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            let event = res.unwrap();
-            match event.kind {
-                notify::EventKind::Modify(ModifyKind::Data(_)) => {
-                    watch_sender.send(event.paths).unwrap();
+        let watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
+            if let Ok(event) = result {
+                if matches!(
+                    event.kind,
+                    notify::EventKind::Modify(ModifyKind::Data(_))
+                        | notify::EventKind::Modify(ModifyKind::Name(_))
+                ) {
+                    let _ = watch_sender.send(());
                 }
-                _ => {}
-            };
-        })
-        .unwrap();
+            }
+        });
+        let mut watcher = match watcher {
+            Ok(watcher) => watcher,
+            Err(error) => {
+                let _ = self.app.send(Err(FileWatcherError::Watcher(error)));
+                return;
+            }
+        };
 
-        let (mut _content_sender, mut _content_receiver) = unbounded::<io::Result<String>>();
-        let (mut _watch_sender, mut _watch_receiver) = unbounded::<()>();
+        let (mut content_sender, mut content_receiver) = unbounded::<io::Result<String>>();
+        let (mut refresh_sender, mut refresh_receiver) = unbounded::<()>();
+
         loop {
             select! {
-                recv(self.receiver) -> msg => {
-                    match msg? {
-                        FileWatcherMessage::FilePath(file_path) => {
-                            (_content_sender, _content_receiver) = unbounded();
-                            (_watch_sender, _watch_receiver) = unbounded::<()>();
+                recv(self.receiver) -> message => {
+                    let Ok(FileWatcherMessage::FilePath(file_path)) = message else {
+                        return;
+                    };
+                    (content_sender, content_receiver) = unbounded();
+                    (refresh_sender, refresh_receiver) = unbounded();
 
-                            if let Some(p) = &self.file_path {
-                                watcher.unwatch(p).expect(format!("Failed to unwatch {:?}", p).as_str());
-                                self.file_path = None;
-                            }
-
-                            if let Some(p) = file_path {
-                                let res = watcher.watch(Path::new(&p), RecursiveMode::NonRecursive);
-                                match res {
-                                    Ok(_) => {
-                                        self.file_path = Some(p.clone());
-                                        let i = self.interval.clone();
-                                        thread::spawn(move || FileReader::new(_content_sender, _watch_receiver, p, i).run());
-                                    },
-                                    Err(e) => self.app.send(Err(FileWatcherError::Watcher(e))).unwrap()
-                                };
-                            } else {
-                                _content_sender.send(Ok("".to_string())).unwrap();
-                            }
+                    if let Some(path) = self.file_path.take() {
+                        if let Err(error) = watcher.unwatch(&path) {
+                            let _ = self.app.send(Err(FileWatcherError::Watcher(error)));
                         }
                     }
+
+                    if let Some(path) = file_path {
+                        match watcher.watch(Path::new(&path), RecursiveMode::NonRecursive) {
+                            Ok(()) => {
+                                self.file_path = Some(path.clone());
+                                let interval = self.interval;
+                                let sender = content_sender.clone();
+                                let receiver = refresh_receiver.clone();
+                                thread::spawn(move || {
+                                    FileReader::new(sender, receiver, path, interval).run()
+                                });
+                            }
+                            Err(error) => {
+                                let _ = self.app.send(Err(FileWatcherError::Watcher(error)));
+                            }
+                        }
+                    } else {
+                        let _ = self.app.send(Ok(String::new()));
+                    }
                 }
-                recv(watch_receiver) -> _ => { _watch_sender.send(()).unwrap(); }
-                recv(_content_receiver) -> msg => {
-                    self.app.send(msg.unwrap().map_err(|e| FileWatcherError::File(e))).unwrap();
+                recv(watch_receiver) -> signal => {
+                    if signal.is_err() || refresh_sender.send(()).is_err() {
+                        return;
+                    }
+                }
+                recv(content_receiver) -> message => {
+                    match message {
+                        Ok(result) => {
+                            if self.app.send(result.map_err(FileWatcherError::File)).is_err() {
+                                return;
+                            }
+                        }
+                        Err(_) => {}
+                    }
                 }
             }
         }
@@ -127,38 +154,44 @@ impl FileReader {
         file_path: PathBuf,
         interval: Duration,
     ) -> Self {
-        FileReader {
-            content_sender: content_sender,
-            receiver: receiver,
-            file_path: file_path,
-            interval: interval,
-            content: "".to_string(),
+        Self {
+            content_sender,
+            receiver,
+            file_path,
+            interval,
+            content: String::new(),
             pos: 0,
         }
     }
 
-    fn run(&mut self) -> Result<(), ()> {
+    fn run(&mut self) {
         loop {
-            self.update().map_err(|_| ())?;
+            if self.update().is_err() {
+                return;
+            }
             select! {
-                recv(self.receiver) -> msg => {
-                    msg.map_err(|_| ())?;
+                recv(self.receiver) -> signal => {
+                    if signal.is_err() {
+                        return;
+                    }
                 }
-                // in case the file watcher doesn't work (e.g. network mounted fs)
                 default(self.interval) => {}
             }
         }
     }
 
-    fn update(&mut self) -> Result<(), SendError<io::Result<String>>> {
-        let s = File::open(&self.file_path).and_then(|mut f| {
-            // avoid reading the whole file every time
-            self.pos = f.seek(io::SeekFrom::Start(self.pos))?;
-            self.pos += f.read_to_string(&mut self.content)? as u64;
+    fn update(&mut self) -> Result<(), ()> {
+        let result = File::open(&self.file_path).and_then(|mut file| {
+            let length = file.metadata()?.len();
+            if length < self.pos {
+                self.pos = 0;
+                self.content.clear();
+            }
+            file.seek(io::SeekFrom::Start(self.pos))?;
+            self.pos += file.read_to_string(&mut self.content)? as u64;
             Ok(self.content.clone())
         });
-        // let s = fs::read_to_string(&self.file_path); // alternative: always read the whole file
-        self.content_sender.send(s)
+        self.content_sender.send(result).map_err(|_| ())
     }
 }
 
@@ -167,7 +200,6 @@ impl FileWatcherHandle {
         let (sender, receiver) = unbounded();
         let mut actor = FileWatcher::new(app, receiver, interval);
         thread::spawn(move || actor.run());
-
         Self {
             sender,
             file_path: None,
@@ -177,9 +209,7 @@ impl FileWatcherHandle {
     pub fn set_file_path(&mut self, file_path: Option<PathBuf>) {
         if self.file_path != file_path {
             self.file_path = file_path.clone();
-            self.sender
-                .send(FileWatcherMessage::FilePath(file_path))
-                .unwrap();
+            let _ = self.sender.send(FileWatcherMessage::FilePath(file_path));
         }
     }
 }

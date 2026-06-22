@@ -17,6 +17,7 @@ pub enum Event {
     /// Terminal resize event
     #[allow(dead_code)]
     Resize(u16, u16),
+    Error,
 }
 
 /// Event handler configuration
@@ -64,14 +65,21 @@ impl EventHandler {
                         .checked_sub(last_tick.elapsed())
                         .unwrap_or(Duration::from_secs(0));
 
-                    if event::poll(timeout).expect("Failed to poll for events") {
-                        match event::read().expect("Failed to read event") {
-                            CrosstermEvent::Key(key) => {
+                    let has_event = match event::poll(timeout) {
+                        Ok(has_event) => has_event,
+                        Err(_) => {
+                            let _ = tx.send(Event::Error);
+                            return;
+                        }
+                    };
+                    if has_event {
+                        match event::read() {
+                            Ok(CrosstermEvent::Key(key)) => {
                                 if tx.send(Event::Key(key)).is_err() {
                                     return;
                                 }
                             }
-                            CrosstermEvent::Mouse(mouse) => {
+                            Ok(CrosstermEvent::Mouse(mouse)) => {
                                 if !config.enable_mouse_capture {
                                     continue;
                                 }
@@ -79,12 +87,16 @@ impl EventHandler {
                                     return;
                                 }
                             }
-                            CrosstermEvent::Resize(width, height) => {
+                            Ok(CrosstermEvent::Resize(width, height)) => {
                                 if tx.send(Event::Resize(width, height)).is_err() {
                                     return;
                                 }
                             }
-                            _ => {}
+                            Ok(_) => {}
+                            Err(_) => {
+                                let _ = tx.send(Event::Error);
+                                return;
+                            }
                         }
                     }
 

@@ -1,11 +1,13 @@
 use crossterm::event::KeyModifiers;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::Line,
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
     Frame,
 };
+
+use super::theme::Palette;
 
 /// Available columns for display in job list
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -31,6 +33,53 @@ pub enum JobColumn {
 }
 
 impl JobColumn {
+    pub fn id(&self) -> &'static str {
+        match self {
+            JobColumn::Id => "id",
+            JobColumn::Name => "name",
+            JobColumn::User => "user",
+            JobColumn::State => "state",
+            JobColumn::Partition => "partition",
+            JobColumn::QoS => "qos",
+            JobColumn::Nodes => "nodes",
+            JobColumn::Node => "node",
+            JobColumn::CPUs => "cpus",
+            JobColumn::Time => "time",
+            JobColumn::Memory => "memory",
+            JobColumn::Account => "account",
+            JobColumn::Priority => "priority",
+            JobColumn::WorkDir => "work-dir",
+            JobColumn::SubmitTime => "submit-time",
+            JobColumn::StartTime => "start-time",
+            JobColumn::EndTime => "end-time",
+            JobColumn::PReason => "pending-reason",
+        }
+    }
+
+    pub fn from_id(value: &str) -> Option<Self> {
+        Some(match value {
+            "id" => JobColumn::Id,
+            "name" => JobColumn::Name,
+            "user" => JobColumn::User,
+            "state" => JobColumn::State,
+            "partition" => JobColumn::Partition,
+            "qos" => JobColumn::QoS,
+            "nodes" => JobColumn::Nodes,
+            "node" => JobColumn::Node,
+            "cpus" => JobColumn::CPUs,
+            "time" => JobColumn::Time,
+            "memory" => JobColumn::Memory,
+            "account" => JobColumn::Account,
+            "priority" => JobColumn::Priority,
+            "work-dir" => JobColumn::WorkDir,
+            "submit-time" => JobColumn::SubmitTime,
+            "start-time" => JobColumn::StartTime,
+            "end-time" => JobColumn::EndTime,
+            "pending-reason" => JobColumn::PReason,
+            _ => return None,
+        })
+    }
+
     /// Get the title for this column
     pub fn title(&self) -> &'static str {
         match self {
@@ -154,6 +203,21 @@ pub enum SortOrder {
 }
 
 impl SortOrder {
+    pub fn id(&self) -> &'static str {
+        match self {
+            SortOrder::Ascending => "asc",
+            SortOrder::Descending => "desc",
+        }
+    }
+
+    pub fn from_id(value: &str) -> Option<Self> {
+        match value {
+            "asc" => Some(SortOrder::Ascending),
+            "desc" => Some(SortOrder::Descending),
+            _ => None,
+        }
+    }
+
     /// Toggle the sort order
     pub fn toggle(&self) -> Self {
         match self {
@@ -243,14 +307,15 @@ impl ColumnsPopup {
     }
 
     /// Render the columns popup
-    pub fn render(&mut self, frame: &mut Frame, area: Rect) {
+    pub fn render(&mut self, frame: &mut Frame, area: Rect, palette: Palette) {
         // Render Clear first
         frame.render_widget(Clear, area);
         // Create a block for the popup
         let block = Block::default()
             .title(Line::from("Column Management").centered())
-            .borders(Borders::NONE)
-            .style(Style::default().bg(Color::Black));
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(palette.border))
+            .style(Style::default().bg(palette.surface).fg(palette.text));
 
         frame.render_widget(block.clone(), area);
 
@@ -265,14 +330,14 @@ impl ColumnsPopup {
             .split(area);
 
         // Render the unified three-column view
-        self.render_unified_columns_view(frame, inner_area[0]);
+        self.render_unified_columns_view(frame, inner_area[0], palette);
 
         // Render help text
-        self.render_help_text(frame, inner_area[1]);
+        self.render_help_text(frame, inner_area[1], palette);
     }
 
     /// Render the columns tab (available and selected columns)
-    fn render_unified_columns_view(&mut self, frame: &mut Frame, area: Rect) {
+    fn render_unified_columns_view(&mut self, frame: &mut Frame, area: Rect, palette: Palette) {
         // Split the area into three columns
         let columns = Layout::default()
             .direction(Direction::Horizontal)
@@ -288,9 +353,9 @@ impl ColumnsPopup {
             .title("Available Columns")
             .borders(Borders::ALL)
             .style(if self.focus == ColumnsFocus::AvailableColumns {
-                Style::default().fg(Color::Cyan)
+                Style::default().fg(palette.accent)
             } else {
-                Style::default()
+                Style::default().fg(palette.border)
             });
 
         let available_items: Vec<ListItem> = self
@@ -301,7 +366,12 @@ impl ColumnsPopup {
 
         let available_list = List::new(available_items)
             .block(available_block)
-            .highlight_style(Style::default().add_modifier(Modifier::BOLD));
+            .highlight_style(
+                Style::default()
+                    .bg(palette.surface_alt)
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::BOLD),
+            );
 
         frame.render_stateful_widget(
             available_list,
@@ -314,9 +384,9 @@ impl ColumnsPopup {
             .title("Selected Columns")
             .borders(Borders::ALL)
             .style(if self.focus == ColumnsFocus::SelectedColumns {
-                Style::default().fg(Color::Cyan)
+                Style::default().fg(palette.accent)
             } else {
-                Style::default()
+                Style::default().fg(palette.border)
             });
 
         let selected_items: Vec<ListItem> = self
@@ -327,7 +397,12 @@ impl ColumnsPopup {
 
         let selected_list = List::new(selected_items)
             .block(selected_block)
-            .highlight_style(Style::default().add_modifier(Modifier::BOLD));
+            .highlight_style(
+                Style::default()
+                    .bg(palette.surface_alt)
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::BOLD),
+            );
 
         frame.render_stateful_widget(selected_list, columns[1], &mut self.selected_columns_state);
 
@@ -336,9 +411,9 @@ impl ColumnsPopup {
             .title("Sort Order")
             .borders(Borders::ALL)
             .style(if self.focus == ColumnsFocus::SortColumns {
-                Style::default().fg(Color::Cyan)
+                Style::default().fg(palette.accent)
             } else {
-                Style::default()
+                Style::default().fg(palette.border)
             });
 
         let sort_items: Vec<ListItem> = self
@@ -353,14 +428,17 @@ impl ColumnsPopup {
             })
             .collect();
 
-        let sort_list = List::new(sort_items)
-            .block(sort_block)
-            .highlight_style(Style::default().add_modifier(Modifier::BOLD));
+        let sort_list = List::new(sort_items).block(sort_block).highlight_style(
+            Style::default()
+                .bg(palette.surface_alt)
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        );
 
         frame.render_stateful_widget(sort_list, columns[2], &mut self.sort_columns_state);
     }
 
-    fn render_help_text(&self, frame: &mut Frame, area: Rect) {
+    fn render_help_text(&self, frame: &mut Frame, area: Rect, palette: Palette) {
         let base_help_text = match self.focus {
             ColumnsFocus::AvailableColumns => {
                 "↑/↓: Navigate | ←/→: Switch lists | Enter: Add to Selected"
@@ -377,8 +455,12 @@ impl ColumnsPopup {
         let full_help_text = format!("{} | Ctrl+a: Apply | Esc: Close", base_help_text);
 
         let help = Paragraph::new(full_help_text)
-            .style(Style::default().fg(Color::Gray))
-            .block(Block::default().borders(Borders::ALL));
+            .style(Style::default().fg(palette.muted).bg(palette.surface))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(palette.border)),
+            );
 
         frame.render_widget(help, area);
     }

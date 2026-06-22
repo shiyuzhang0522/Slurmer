@@ -1,11 +1,14 @@
 [package]
 name = "slurmer"
-version = "0.1.2"
+version = "0.2.0"
 description = "A TUI application for monitoring and managing SLURM jobs."
-authors = ["wjwei-handsome <weiwenjie@westlake.edu.cn>"]
+authors = [
+    "Shelley <shiyuzhang0522@gmail.com>",
+    "wjwei-handsome <weiwenjie@westlake.edu.cn>",
+]
 license = "MIT"
 edition = "2021"
-repository = "https://github.com/wjwei-handsome/Slurmer"
+repository = "https://github.com/shiyuzhang0522/Slurmer"
 readme = "README.md"
 exclude = ["images/",]
 

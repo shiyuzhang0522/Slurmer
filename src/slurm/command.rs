@@ -1,10 +1,21 @@
 use async_process::{Command, Output};
-use color_eyre::Result;
+use color_eyre::{eyre::eyre, Result};
 use std::collections::HashMap;
 
 /// Execute a Slurm command asynchronously and return the output
 pub async fn execute_command(cmd: &str, args: Vec<String>) -> Result<Output> {
     let output = Command::new(cmd).args(args).output().await?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(eyre!(
+            "{cmd} failed{}",
+            if stderr.is_empty() {
+                String::new()
+            } else {
+                format!(": {stderr}")
+            }
+        ));
+    }
 
     Ok(output)
 }

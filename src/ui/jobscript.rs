@@ -8,6 +8,8 @@ use ratatui::{
 };
 use std::{collections::HashMap, process::Command};
 
+use super::theme::Palette;
+
 /// JobScript viewer widget for displaying job batch scripts with syntax highlighting
 pub struct JobScript {
     pub visible: bool,
@@ -92,7 +94,7 @@ impl JobScript {
     }
 
     /// Render the job script view
-    pub fn render(&self, frame: &mut Frame, area: Rect) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, palette: Palette) {
         if !self.visible {
             return;
         }
@@ -117,13 +119,12 @@ impl JobScript {
         let text = self.create_display_text();
 
         let script_paragraph = Paragraph::new(text)
-            // .style(Style::default().fg(Color::White))
-            // .style(Style::default().bg(Color::LightCyan))
+            .style(Style::default().fg(palette.text).bg(palette.background))
             .block(
                 Block::default()
                     .title(format!("{}{}", title, help_text))
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Cyan)),
+                    .border_style(Style::default().fg(palette.border)),
             )
             .wrap(Wrap { trim: false })
             .scroll((self.scroll_position as u16, 0));

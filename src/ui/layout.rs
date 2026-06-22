@@ -1,11 +1,13 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style, Stylize},
+    style::{Style, Stylize},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Paragraph},
     Frame,
 };
 use std::time::Duration;
+
+use super::theme::Palette;
 
 /// Defines the main layout of the application
 pub fn draw_main_layout(frame: &mut Frame) -> Vec<Rect> {
@@ -33,6 +35,8 @@ pub fn draw_header(
     status_text: &str,
     time_since_refresh: Duration,
     refresh_interval: u64,
+    search: Option<(&str, usize, usize)>,
+    palette: Palette,
 ) {
     // Split the header area into title and status
     let header_chunks = Layout::default()
@@ -45,35 +49,57 @@ pub fn draw_header(
 
     // Render the title part
     let title = Paragraph::new(Text::from(vec![Line::from(vec![
-        Span::styled("SLURMER", Style::default().fg(Color::Cyan).bold()),
+        Span::styled("SLURMER", Style::default().fg(palette.accent).bold()),
         Span::raw(" - "),
-        Span::styled("Slurm Terminal UI", Style::default().fg(Color::White)),
+        Span::styled(
+            "dark neon job console",
+            Style::default().fg(palette.accent_alt),
+        ),
     ])]))
-    .block(Block::default().borders(Borders::ALL));
+    .style(Style::default().bg(palette.surface).fg(palette.text))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(palette.border)),
+    );
 
     frame.render_widget(title, header_chunks[0]);
 
     // Render the status part
-    let status_info = format!(
+    let mut status_info = format!(
         "{} | Refresh: {}s ago (auto: {}s)",
         status_text,
         time_since_refresh.as_secs(),
         refresh_interval
     );
+    if let Some((query, matches, total)) = search {
+        status_info.push_str(&format!(" | /{query} [{matches}/{total}]"));
+    }
 
     let status = Paragraph::new(status_info)
-        .block(Block::default().borders(Borders::ALL))
-        .style(Style::default());
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(palette.border)),
+        )
+        .style(Style::default().bg(palette.surface).fg(palette.text));
 
     frame.render_widget(status, header_chunks[1]);
 }
 
 /// Draws the application footer with help text and status
-pub fn draw_footer(frame: &mut Frame, area: Rect, job_stat: (usize, usize, usize)) {
+pub fn draw_footer(
+    frame: &mut Frame,
+    area: Rect,
+    job_stat: (usize, usize, usize),
+    palette: Palette,
+) {
     // Controls help (lower part of footer)
-    let color_style = Style::default().fg(Color::Cyan);
+    let color_style = Style::default().fg(palette.accent);
     let text_hashmap = [
         ("Esc", "Quit"),
+        ("/", "Search"),
+        ("s", "Settings"),
         ("↑/↓", "Navigate"),
         ("Space", "Select"),
         ("Enter", "Script"),
@@ -97,22 +123,30 @@ pub fn draw_footer(frame: &mut Frame, area: Rect, job_stat: (usize, usize, usize
         })
         .collect();
 
-    footer_text.push(Span::styled("Job Stat: ", Style::default().fg(Color::Cyan)));
+    footer_text.push(Span::styled(
+        "Job Stat: ",
+        Style::default().fg(palette.accent),
+    ));
     footer_text.push(Span::styled(
         format!("P[ {} ] ", job_stat.0),
-        Style::default().fg(Color::Yellow),
+        Style::default().fg(palette.warning),
     ));
     footer_text.push(Span::styled(
         format!("R[ {} ] ", job_stat.1),
-        Style::default().fg(Color::Green),
+        Style::default().fg(palette.success),
     ));
     footer_text.push(Span::styled(
         format!("Other[ {} ]", job_stat.2),
-        Style::default().fg(Color::Blue),
+        Style::default().fg(palette.info),
     ));
 
-    let footer =
-        Paragraph::new(Line::from(footer_text)).block(Block::default().borders(Borders::ALL));
+    let footer = Paragraph::new(Line::from(footer_text))
+        .style(Style::default().bg(palette.surface).fg(palette.text))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(palette.border)),
+        );
 
     frame.render_widget(footer, area);
 }

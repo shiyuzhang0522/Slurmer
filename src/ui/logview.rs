@@ -3,13 +3,14 @@ use crossbeam::channel::{unbounded, Receiver};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
 use std::{collections::HashMap, iter::once, path::PathBuf, process::Command, time::Duration};
 
+use crate::ui::theme::Palette;
 use crate::utils::file_watcher::{FileWatcherError, FileWatcherHandle};
 
 /// Type of log to view
@@ -164,9 +165,7 @@ impl LogView {
         //         .map_or(true, |instant| instant.elapsed() >= self.refresh_interval)
         // };
 
-        if self.file_receiver.is_some() {
-            let receiver = self.file_receiver.as_ref().unwrap();
-
+        if let Some(receiver) = self.file_receiver.as_ref() {
             // Check for new content from the file watcher
             while let Ok(result) = receiver.try_recv() {
                 match result {
@@ -228,7 +227,7 @@ impl LogView {
     }
 
     /// Render the log view
-    pub fn render(&self, frame: &mut Frame, area: Rect) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, palette: Palette) {
         if !self.visible {
             return;
         }
@@ -263,12 +262,12 @@ impl LogView {
         // eprintln!("fit_text: {}", log_text);
 
         let log_paragraph = Paragraph::new(fit_text)
-            .style(Style::default().fg(Color::White))
+            .style(Style::default().fg(palette.text).bg(palette.background))
             .block(
                 Block::default()
                     .title(format!("{}{}", title, help_text))
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Cyan)),
+                    .border_style(Style::default().fg(palette.border)),
             )
             .wrap(Wrap { trim: false })
             .scroll((self.scroll_position as u16, 0));
@@ -396,12 +395,10 @@ impl LogView {
                     // Check if we have valid paths for the current tab
                     let has_path = match self.current_tab {
                         LogTab::StdOut => {
-                            self.stdout_path.is_some()
-                                && !self.stdout_path.as_ref().unwrap().is_empty()
+                            self.stdout_path.as_deref().is_some_and(|p| !p.is_empty())
                         }
                         LogTab::StdErr => {
-                            self.stderr_path.is_some()
-                                && !self.stderr_path.as_ref().unwrap().is_empty()
+                            self.stderr_path.as_deref().is_some_and(|p| !p.is_empty())
                         }
                     };
 

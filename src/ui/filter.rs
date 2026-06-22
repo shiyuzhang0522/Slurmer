@@ -1,7 +1,7 @@
 use crossterm::event::KeyModifiers;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Position, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::Line,
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
     Frame,
@@ -9,6 +9,7 @@ use ratatui::{
 use regex::Regex;
 
 use crate::slurm::{squeue::SqueueOptions, JobState};
+use crate::ui::theme::Palette;
 
 /// Filter popup state
 pub struct FilterPopup {
@@ -133,13 +134,15 @@ impl FilterPopup {
         all_states: &[JobState],
         all_partitions: &[String],
         all_qos: &[String],
+        palette: Palette,
     ) {
         frame.render_widget(Clear, area);
         // Create a block for the popup
         let block = Block::default()
             .title(Line::from("Filter Jobs").centered())
-            .borders(Borders::NONE)
-            .style(Style::default().bg(Color::Black));
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(palette.border))
+            .style(Style::default().bg(palette.surface).fg(palette.text));
 
         // Render the popup block
         frame.render_widget(block.clone(), area);
@@ -156,7 +159,7 @@ impl FilterPopup {
             .split(area);
 
         // Render the user tab on top
-        self.render_user_tab(frame, inner_area[0]);
+        self.render_user_tab(frame, inner_area[0], palette);
 
         // Create horizontal layout for the bottom three sections
         let bottom_chunks = Layout::default()
@@ -169,21 +172,25 @@ impl FilterPopup {
             .split(inner_area[1]);
 
         // Render bottom three sections
-        self.render_states_tab(frame, bottom_chunks[0], options, all_states);
-        self.render_partitions_tab(frame, bottom_chunks[1], options, all_partitions);
-        self.render_qos_tab(frame, bottom_chunks[2], options, all_qos);
+        self.render_states_tab(frame, bottom_chunks[0], options, all_states, palette);
+        self.render_partitions_tab(frame, bottom_chunks[1], options, all_partitions, palette);
+        self.render_qos_tab(frame, bottom_chunks[2], options, all_qos, palette);
 
         // Render help text at the bottom
         let help_text = "↑/↓: Navigate | ←/→: Switch Filters | Enter: Select/Input | Ctrl+a: Apply | Esc: Close";
         let help = Paragraph::new(help_text)
-            .style(Style::default().fg(Color::Gray))
-            .block(Block::default().borders(Borders::ALL));
+            .style(Style::default().fg(palette.muted).bg(palette.surface))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(palette.border)),
+            );
 
         frame.render_widget(help, inner_area[2]);
     }
 
     /// Render the user and name filter tab
-    fn render_user_tab(&self, frame: &mut Frame, area: Rect) {
+    fn render_user_tab(&self, frame: &mut Frame, area: Rect, palette: Palette) {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .margin(1)
@@ -199,9 +206,9 @@ impl FilterPopup {
             .title("Username")
             .borders(Borders::ALL)
             .style(if self.focus == FilterFocus::Username {
-                Style::default().fg(Color::Cyan)
+                Style::default().fg(palette.accent)
             } else {
-                Style::default()
+                Style::default().fg(palette.border)
             });
 
         let username_text = Paragraph::new(self.username.clone()).block(username_block);
@@ -219,10 +226,10 @@ impl FilterPopup {
         // Set color based on validation status for name filter
         let name_block_style = match (self.focus == FilterFocus::NameFilter, self.name_regex_valid)
         {
-            (true, _) => Style::default().fg(Color::Cyan),
-            (false, Some(true)) => Style::default(),
-            (false, Some(false)) => Style::default().fg(Color::Red),
-            (false, None) => Style::default(),
+            (true, _) => Style::default().fg(palette.accent),
+            (false, Some(true)) => Style::default().fg(palette.border),
+            (false, Some(false)) => Style::default().fg(palette.danger),
+            (false, None) => Style::default().fg(palette.border),
         };
 
         let name_filter_block = Block::default()
@@ -245,10 +252,10 @@ impl FilterPopup {
         // Set color based on validation status for node filter
         let node_block_style = match (self.focus == FilterFocus::NodeFilter, self.node_regex_valid)
         {
-            (true, _) => Style::default().fg(Color::Cyan),
-            (false, Some(true)) => Style::default(),
-            (false, Some(false)) => Style::default().fg(Color::Red),
-            (false, None) => Style::default(),
+            (true, _) => Style::default().fg(palette.accent),
+            (false, Some(true)) => Style::default().fg(palette.border),
+            (false, Some(false)) => Style::default().fg(palette.danger),
+            (false, None) => Style::default().fg(palette.border),
         };
 
         let node_filter_block = Block::default()
@@ -264,15 +271,15 @@ impl FilterPopup {
         if self.input_mode {
             let cursor_position = match self.focus {
                 FilterFocus::Username => (
-                    chunks[0].x + 1 + self.username.len() as u16,
+                    chunks[0].x + 1 + self.username.chars().count() as u16,
                     chunks[0].y + 1,
                 ),
                 FilterFocus::NameFilter => (
-                    chunks[1].x + 1 + self.name_filter.len() as u16,
+                    chunks[1].x + 1 + self.name_filter.chars().count() as u16,
                     chunks[1].y + 1,
                 ),
                 FilterFocus::NodeFilter => (
-                    chunks[2].x + 1 + self.node_filter.len() as u16,
+                    chunks[2].x + 1 + self.node_filter.chars().count() as u16,
                     chunks[2].y + 1,
                 ),
                 _ => (0, 0),
@@ -294,14 +301,15 @@ impl FilterPopup {
         area: Rect,
         options: &SqueueOptions,
         all_states: &[JobState],
+        palette: Palette,
     ) {
         let state_block = Block::default()
             .title("Job States")
             .borders(Borders::ALL)
             .style(if self.focus == FilterFocus::States {
-                Style::default().fg(Color::Cyan)
+                Style::default().fg(palette.accent)
             } else {
-                Style::default()
+                Style::default().fg(palette.border)
             });
 
         let state_items: Vec<ListItem> = all_states
@@ -311,17 +319,20 @@ impl FilterPopup {
                 let prefix = if is_selected { "[X] " } else { "[ ] " };
                 ListItem::new(Line::from(format!("{}{}", prefix, state))).style(
                     Style::default().fg(if is_selected {
-                        Color::Green
+                        palette.success
                     } else {
-                        Color::White
+                        palette.text
                     }),
                 )
             })
             .collect();
 
-        let state_list = List::new(state_items)
-            .block(state_block)
-            .highlight_style(Style::default().add_modifier(Modifier::BOLD));
+        let state_list = List::new(state_items).block(state_block).highlight_style(
+            Style::default()
+                .bg(palette.surface_alt)
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        );
 
         frame.render_stateful_widget(state_list, area, &mut self.state_list_state);
     }
@@ -333,14 +344,15 @@ impl FilterPopup {
         area: Rect,
         options: &SqueueOptions,
         all_partitions: &[String],
+        palette: Palette,
     ) {
         let partition_block = Block::default()
             .title("Partitions")
             .borders(Borders::ALL)
             .style(if self.focus == FilterFocus::Partitions {
-                Style::default().fg(Color::Cyan)
+                Style::default().fg(palette.accent)
             } else {
-                Style::default()
+                Style::default().fg(palette.border)
             });
 
         let partition_items: Vec<ListItem> = all_partitions
@@ -350,9 +362,9 @@ impl FilterPopup {
                 let prefix = if is_selected { "[X] " } else { "[ ] " };
                 ListItem::new(Line::from(format!("{}{}", prefix, partition))).style(
                     Style::default().fg(if is_selected {
-                        Color::Green
+                        palette.success
                     } else {
-                        Color::White
+                        palette.text
                     }),
                 )
             })
@@ -360,7 +372,12 @@ impl FilterPopup {
 
         let partition_list = List::new(partition_items)
             .block(partition_block)
-            .highlight_style(Style::default().add_modifier(Modifier::BOLD));
+            .highlight_style(
+                Style::default()
+                    .bg(palette.surface_alt)
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::BOLD),
+            );
 
         frame.render_stateful_widget(partition_list, area, &mut self.partition_list_state);
     }
@@ -372,14 +389,15 @@ impl FilterPopup {
         area: Rect,
         options: &SqueueOptions,
         all_qos: &[String],
+        palette: Palette,
     ) {
         let qos_block = Block::default()
             .title("Quality of Service")
             .borders(Borders::ALL)
             .style(if self.focus == FilterFocus::QoS {
-                Style::default().fg(Color::Cyan)
+                Style::default().fg(palette.accent)
             } else {
-                Style::default()
+                Style::default().fg(palette.border)
             });
 
         let qos_items: Vec<ListItem> = all_qos
@@ -389,17 +407,20 @@ impl FilterPopup {
                 let prefix = if is_selected { "[X] " } else { "[ ] " };
                 ListItem::new(Line::from(format!("{}{}", prefix, qos))).style(Style::default().fg(
                     if is_selected {
-                        Color::Green
+                        palette.success
                     } else {
-                        Color::White
+                        palette.text
                     },
                 ))
             })
             .collect();
 
-        let qos_list = List::new(qos_items)
-            .block(qos_block)
-            .highlight_style(Style::default().add_modifier(Modifier::BOLD));
+        let qos_list = List::new(qos_items).block(qos_block).highlight_style(
+            Style::default()
+                .bg(palette.surface_alt)
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        );
 
         frame.render_stateful_widget(qos_list, area, &mut self.qos_list_state);
     }
@@ -493,6 +514,9 @@ impl FilterPopup {
             KeyCode::Up => {
                 match self.focus {
                     FilterFocus::States => {
+                        if all_states.is_empty() {
+                            return FilterAction::None;
+                        }
                         let selected = self.state_list_state.selected().unwrap_or(0);
                         if selected > 0 {
                             self.state_list_state.select(Some(selected - 1));
@@ -503,6 +527,9 @@ impl FilterPopup {
                         }
                     }
                     FilterFocus::Partitions => {
+                        if all_partitions.is_empty() {
+                            return FilterAction::None;
+                        }
                         let selected = self.partition_list_state.selected().unwrap_or(0);
                         if selected > 0 {
                             self.partition_list_state.select(Some(selected - 1));
@@ -513,6 +540,9 @@ impl FilterPopup {
                         }
                     }
                     FilterFocus::QoS => {
+                        if all_qos.is_empty() {
+                            return FilterAction::None;
+                        }
                         let selected = self.qos_list_state.selected().unwrap_or(0);
                         if selected > 0 {
                             self.qos_list_state.select(Some(selected - 1));
@@ -528,6 +558,9 @@ impl FilterPopup {
             KeyCode::Down => {
                 match self.focus {
                     FilterFocus::States => {
+                        if all_states.is_empty() {
+                            return FilterAction::None;
+                        }
                         let selected = self.state_list_state.selected().unwrap_or(0);
                         if selected < all_states.len() - 1 {
                             self.state_list_state.select(Some(selected + 1));
@@ -538,6 +571,9 @@ impl FilterPopup {
                         }
                     }
                     FilterFocus::Partitions => {
+                        if all_partitions.is_empty() {
+                            return FilterAction::None;
+                        }
                         let selected = self.partition_list_state.selected().unwrap_or(0);
                         if selected < all_partitions.len() - 1 {
                             self.partition_list_state.select(Some(selected + 1));
@@ -547,6 +583,9 @@ impl FilterPopup {
                         }
                     }
                     FilterFocus::QoS => {
+                        if all_qos.is_empty() {
+                            return FilterAction::None;
+                        }
                         let selected = self.qos_list_state.selected().unwrap_or(0);
                         if selected < all_qos.len() - 1 {
                             self.qos_list_state.select(Some(selected + 1));

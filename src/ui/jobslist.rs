@@ -1,18 +1,24 @@
+use std::collections::HashSet;
+
 use ratatui::{
     layout::{Constraint, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
     Frame,
 };
 
-use crate::slurm::{Job, JobState};
+use crate::search::job_score;
+use crate::slurm::Job;
 use crate::ui::columns::{JobColumn, SortColumn};
+use crate::ui::theme::Palette;
 
 /// Struct to manage the jobs list view
 pub struct JobsList {
     pub state: TableState,
     pub jobs: Vec<Job>,
-    pub selected_jobs: Vec<usize>,
+    all_jobs: Vec<Job>,
+    pub selected_jobs: HashSet<String>,
+    search_query: String,
     pub sort_column: usize,
     pub sort_ascending: bool,
 }
@@ -22,7 +28,9 @@ impl JobsList {
         Self {
             state: TableState::default(),
             jobs: Vec::new(),
-            selected_jobs: Vec::new(),
+            all_jobs: Vec::new(),
+            selected_jobs: HashSet::new(),
+            search_query: String::new(),
             sort_column: 0, // Default sort by job ID
             sort_ascending: true,
         }
@@ -30,38 +38,78 @@ impl JobsList {
 
     /// Update the list of jobs
     pub fn update_jobs(&mut self, jobs: Vec<Job>) {
-        self.jobs = jobs;
-        // Jobs are already sorted by the squeue command
+        let selected_id = self.selected_job().map(|job| job.id.clone());
+        self.all_jobs = jobs;
+        self.selected_jobs
+            .retain(|id| self.all_jobs.iter().any(|job| &job.id == id));
+        self.apply_search();
 
-        // Reset selection if out of bounds
-        if let Some(selected) = self.state.selected() {
-            if selected >= self.jobs.len() {
-                self.state.select(Some(0));
+        if let Some(id) = selected_id {
+            if let Some(index) = self.jobs.iter().position(|job| job.id == id) {
+                self.state.select(Some(index));
+                return;
             }
-        } else if !self.jobs.is_empty() {
-            self.state.select(Some(0));
         }
+        self.state.select((!self.jobs.is_empty()).then_some(0));
+    }
+
+    pub fn set_search_query(&mut self, query: String) {
+        let selected_id = self.selected_job().map(|job| job.id.clone());
+        self.search_query = query;
+        self.apply_search();
+        self.state.select(
+            selected_id
+                .and_then(|id| self.jobs.iter().position(|job| job.id == id))
+                .or_else(|| (!self.jobs.is_empty()).then_some(0)),
+        );
+    }
+
+    pub fn search_query(&self) -> &str {
+        &self.search_query
+    }
+
+    pub fn total_count(&self) -> usize {
+        self.all_jobs.len()
+    }
+
+    fn apply_search(&mut self) {
+        if self.search_query.is_empty() {
+            self.jobs = self.all_jobs.clone();
+            return;
+        }
+        let mut scored = self
+            .all_jobs
+            .iter()
+            .filter_map(|job| job_score(&self.search_query, job).map(|score| (score, job.clone())))
+            .collect::<Vec<_>>();
+        scored.sort_by(|left, right| right.0.cmp(&left.0));
+        self.jobs = scored.into_iter().map(|(_, job)| job).collect();
     }
 
     /// Toggle job selection
     pub fn toggle_select(&mut self) {
         if let Some(selected) = self.state.selected() {
-            if self.selected_jobs.contains(&selected) {
-                self.selected_jobs.retain(|&i| i != selected);
-            } else {
-                self.selected_jobs.push(selected);
+            if let Some(job) = self.jobs.get(selected) {
+                if !self.selected_jobs.remove(&job.id) {
+                    self.selected_jobs.insert(job.id.clone());
+                }
             }
         }
     }
 
     /// Judge if all jobs are selected
     pub fn all_selected(&self) -> bool {
-        self.selected_jobs.len() == self.jobs.len()
+        !self.jobs.is_empty()
+            && self
+                .jobs
+                .iter()
+                .all(|job| self.selected_jobs.contains(&job.id))
     }
 
     /// Select all jobs
     pub fn select_all(&mut self) {
-        self.selected_jobs = (0..self.jobs.len()).collect();
+        self.selected_jobs
+            .extend(self.jobs.iter().map(|job| job.id.clone()));
     }
 
     /// Clear all selections
@@ -138,6 +186,7 @@ impl JobsList {
         area: Rect,
         columns: &[JobColumn],
         sort_columns: &[SortColumn],
+        palette: Palette,
     ) {
         // Update sorting if needed based on sort_columns
         if !sort_columns.is_empty() {
@@ -147,8 +196,13 @@ impl JobsList {
         // Check if columns are empty, show warning if so
         if columns.is_empty() {
             let warning = Paragraph::new("No columns selected. Press 'c' to configure columns.")
-                .style(Style::default().fg(Color::Yellow))
-                .block(Block::default().title("Warning").borders(Borders::ALL));
+                .style(Style::default().fg(palette.warning).bg(palette.background))
+                .block(
+                    Block::default()
+                        .title("Warning")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(palette.border)),
+                );
             frame.render_widget(warning, area);
             return;
         }
@@ -161,13 +215,14 @@ impl JobsList {
             // Check if this column is in the sort list
             let is_sort_column = sort_columns.iter().any(|sc| sc.column.title() == h);
             let sort_indicator = if is_sort_column {
-                let sort_col = sort_columns
+                match sort_columns
                     .iter()
                     .find(|sc| sc.column.title() == h)
-                    .unwrap();
-                match sort_col.order {
-                    crate::ui::columns::SortOrder::Ascending => " ↑",
-                    crate::ui::columns::SortOrder::Descending => " ↓",
+                    .map(|sort| sort.order)
+                {
+                    Some(crate::ui::columns::SortOrder::Ascending) => " ↑",
+                    Some(crate::ui::columns::SortOrder::Descending) => " ↓",
+                    None => "",
                 }
             } else {
                 ""
@@ -175,11 +230,11 @@ impl JobsList {
 
             let header_style = if is_sort_column {
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(palette.accent)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
-                    .fg(Color::White)
+                    .fg(palette.text)
                     .add_modifier(Modifier::BOLD)
             };
 
@@ -187,27 +242,21 @@ impl JobsList {
         });
 
         let header = Row::new(header_cells)
-            .style(Style::default().bg(Color::DarkGray))
+            .style(Style::default().bg(palette.surface_alt))
             .height(1);
 
         // Create rows for each job
-        let rows = self.jobs.iter().enumerate().map(|(i, job)| {
-            let is_selected = self.selected_jobs.contains(&i);
-            let color = match job.state {
-                JobState::Pending => Color::Yellow,
-                JobState::Running => Color::Green,
-                JobState::Completed => Color::Blue,
-                JobState::Failed | JobState::Timeout | JobState::NodeFail | JobState::Boot => {
-                    Color::Red
-                }
-                JobState::Cancelled => Color::Magenta,
-                _ => Color::White,
-            };
+        let rows = self.jobs.iter().map(|job| {
+            let is_selected = self.selected_jobs.contains(&job.id);
+            let color = palette.job_state(job.state);
 
             let style = if is_selected {
-                Style::default().fg(color).add_modifier(Modifier::REVERSED)
+                Style::default()
+                    .fg(palette.background)
+                    .bg(color)
+                    .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(color)
+                Style::default().fg(color).bg(palette.background)
             };
 
             // Create cells based on selected columns
@@ -218,8 +267,8 @@ impl JobsList {
                         JobColumn::Id => job.id.clone(),
                         JobColumn::Name => {
                             // Truncate name if too long
-                            if job.name.len() > 30 {
-                                format!("{}...", &job.name[0..27])
+                            if job.name.chars().count() > 30 {
+                                format!("{}...", job.name.chars().take(27).collect::<String>())
                             } else {
                                 job.name.clone()
                             }
@@ -292,9 +341,19 @@ impl JobsList {
         let title = format!("{} Jobs", job_count);
         let table = Table::new(rows, constraints)
             .header(header)
-            .block(Block::default().borders(Borders::ALL).title(title))
-            .row_highlight_style(Style::default().add_modifier(Modifier::BOLD))
-            .highlight_symbol(" ▶ ");
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(title)
+                    .border_style(Style::default().fg(palette.border))
+                    .style(Style::default().bg(palette.background)),
+            )
+            .row_highlight_style(
+                Style::default()
+                    .bg(palette.surface)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(" ◆ ");
 
         // Render the table
         frame.render_stateful_widget(table, area, &mut self.state);
@@ -307,10 +366,38 @@ impl JobsList {
 
     /// Get all selected jobs
     pub fn get_selected_jobs(&self) -> Vec<String> {
-        self.selected_jobs
-            .iter()
-            .filter_map(|&i| self.jobs.get(i))
-            .map(|job| job.id.clone())
-            .collect()
+        self.selected_jobs.iter().cloned().collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn job(id: &str, name: &str) -> Job {
+        Job {
+            id: id.to_string(),
+            name: name.to_string(),
+            ..Job::default()
+        }
+    }
+
+    #[test]
+    fn selections_survive_refresh_by_id() {
+        let mut list = JobsList::new();
+        list.update_jobs(vec![job("1", "one"), job("2", "two")]);
+        list.state.select(Some(1));
+        list.toggle_select();
+        list.update_jobs(vec![job("2", "two"), job("1", "one")]);
+        assert_eq!(list.get_selected_jobs(), vec!["2".to_string()]);
+    }
+
+    #[test]
+    fn fuzzy_search_filters_and_ranks_jobs() {
+        let mut list = JobsList::new();
+        list.update_jobs(vec![job("1", "great-purple-unit"), job("2", "gpu-worker")]);
+        list.set_search_query("gpu".to_string());
+        assert_eq!(list.jobs.len(), 2);
+        assert_eq!(list.jobs[0].id, "2");
     }
 }

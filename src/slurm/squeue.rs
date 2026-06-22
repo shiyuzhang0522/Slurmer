@@ -1,7 +1,6 @@
 use async_process::{Command, Output};
 use color_eyre::eyre::Error;
 use color_eyre::Result;
-use std::collections::HashMap;
 use std::str::FromStr;
 
 use super::Job;
@@ -16,7 +15,7 @@ pub struct SqueueOptions {
     pub name_filter: Option<String>,
     pub node_filter: Option<String>,
     pub format: String,
-    pub sorts: HashMap<String, bool>, // Map of field to sort direction (true for ascending, false for descending)
+    pub sorts: Vec<(String, bool)>,
 }
 
 impl Default for SqueueOptions {
@@ -25,8 +24,7 @@ impl Default for SqueueOptions {
         let username = std::env::var("USER").unwrap_or_else(|_| "".to_string());
 
         // Default sort options
-        let mut sorts = HashMap::new();
-        sorts.insert("i".to_string(), true); // Default sort by job ID ascending
+        let sorts = vec![("i".to_string(), true)];
 
         Self {
             user: Some(username),
@@ -143,12 +141,17 @@ pub async fn run_squeue(options: &SqueueOptions) -> Result<Vec<Job>> {
         }
     };
 
-    // // Check if squeue returned an error
-    // if !output.status.success() {
-    //     let stderr = String::from_utf8_lossy(&output.stderr);
-    //     eprintln!("squeue returned an error: {}", stderr);
-    //     return Ok(Vec::new());
-    // }
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(color_eyre::eyre::eyre!(
+            "squeue failed{}",
+            if stderr.is_empty() {
+                String::new()
+            } else {
+                format!(": {stderr}")
+            }
+        ));
+    }
 
     // Pass the format options with the output to ensure correct parsing
     parse_squeue_output(&output, &options.format)
@@ -157,23 +160,26 @@ pub async fn run_squeue(options: &SqueueOptions) -> Result<Vec<Job>> {
 /// Dynamic parsing of squeue output based on the provided format string
 fn parse_squeue_output(output: &Output, format: &str) -> Result<Vec<Job>> {
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = stdout.lines().collect();
+    Ok(parse_squeue_text(&stdout, format))
+}
 
+fn parse_squeue_text(stdout: &str, format: &str) -> Vec<Job> {
     let mut jobs = Vec::new();
+    let lines = stdout.lines();
 
     // Note: name_filter is now applied in App::refresh_jobs, not here
 
     // Handle empty output
     if stdout.trim().is_empty() {
         // eprintln!("No jobs found in squeue output");
-        return Ok(jobs);
+        return jobs;
     }
 
     let format_codes: Vec<&str> = format.split('|').collect();
 
     if format_codes.is_empty() {
         // eprintln!("Warning: Empty format codes, using default format");
-        return Ok(jobs);
+        return jobs;
     }
 
     // eprintln!("Format codes: {:?}", format_codes);
@@ -184,7 +190,7 @@ fn parse_squeue_output(output: &Output, format: &str) -> Result<Vec<Job>> {
         }
 
         let parts: Vec<&str> = line.split('|').collect();
-        if parts.is_empty() || parts.len() < format_codes.len() / 2 {
+        if parts.len() < format_codes.len() {
             // eprintln!("Skipping invalid line: {}", line);
             continue;
         }
@@ -201,12 +207,6 @@ fn parse_squeue_output(output: &Output, format: &str) -> Result<Vec<Job>> {
             // Skip empty values or "N/A"
             if value.is_empty() || value == "N/A" {
                 continue;
-            }
-
-            // Match the value to the corresponding format code
-            if i >= format_codes.len() {
-                // eprintln!("Warning: More parts than format codes for line");
-                break;
             }
 
             match format_codes[i] {
@@ -237,16 +237,12 @@ fn parse_squeue_output(output: &Output, format: &str) -> Result<Vec<Job>> {
                 "%P" => job.partition = value,
                 "%q" => job.qos = value,
                 "%a" => job.account = Some(value),
-                "%Q" => {
-                    job.priority = value.parse::<u32>().ok().or_else(|| {
-                        // eprintln!("Failed to parse priority: {}", value);
-                        None
-                    })
-                }
+                "%Q" => job.priority = value.parse::<u32>().ok(),
                 "%Z" => job.work_dir = Some(value),
                 "%V" => job.submit_time = Some(value),
                 "%S" => job.start_time = Some(value),
                 "%e" => job.end_time = Some(value),
+                "%R" => job.pending_reason = Some(value),
                 _ => {
                     // eprintln!("Unknown format code: {}", format_codes[i]);
                 }
@@ -256,5 +252,38 @@ fn parse_squeue_output(output: &Output, format: &str) -> Result<Vec<Job>> {
         jobs.push(job);
     }
 
-    Ok(jobs)
+    jobs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sort_arguments_preserve_priority_order() {
+        let options = SqueueOptions {
+            sorts: vec![("P".to_string(), false), ("i".to_string(), true)],
+            ..SqueueOptions::default()
+        };
+        let args = options.to_args();
+        let sort_index = args.iter().position(|arg| arg == "--sort").unwrap();
+        assert_eq!(args[sort_index + 1], "-P,i");
+    }
+
+    #[test]
+    fn invalid_format_is_rejected() {
+        let options = SqueueOptions {
+            format: "%i|name".to_string(),
+            ..SqueueOptions::default()
+        };
+        assert!(!options.validate_format());
+    }
+
+    #[test]
+    fn parser_skips_malformed_rows_and_reads_pending_reason() {
+        let jobs = parse_squeue_text("42|train|PENDING|Resources\nmalformed|row\n", "%i|%j|%T|%R");
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].id, "42");
+        assert_eq!(jobs[0].pending_reason.as_deref(), Some("Resources"));
+    }
 }
