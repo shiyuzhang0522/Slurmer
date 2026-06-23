@@ -977,7 +977,7 @@ checksum = "04dc19736151f35336d325007ac991178d504a119863a2fcb3758cdb5e52c50d"
 
 [[package]]
 name = "slurmer"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-process",
  "color-eyre",
@@ -987,6 +987,7 @@ dependencies = [
  "ratatui",
  "regex",
  "tokio",
+ "unicode-width 0.2.0",
 ]
 
 [[package]]

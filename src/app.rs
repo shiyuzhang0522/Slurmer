@@ -372,8 +372,9 @@ impl App {
     }
 
     /// Render job detail popup
-    fn render_job_script(&self, frame: &mut Frame, area: Rect) {
-        self.script_view.render(frame, area, self.palette());
+    fn render_job_script(&mut self, frame: &mut Frame, area: Rect) {
+        let palette = self.palette();
+        self.script_view.render(frame, area, palette);
     }
 
     /// Render the footer with XXX TODO:replace it
@@ -634,6 +635,22 @@ impl App {
                     && !self.log_view.visible =>
             {
                 self.jobs_list.next();
+            }
+            (_, KeyCode::PageUp) | (KeyModifiers::CONTROL, KeyCode::Char('u'))
+                if !self.filter_popup.visible
+                    && !self.script_view.visible
+                    && !self.columns_popup.visible
+                    && !self.log_view.visible =>
+            {
+                self.jobs_list.page_up();
+            }
+            (_, KeyCode::PageDown) | (KeyModifiers::CONTROL, KeyCode::Char('d'))
+                if !self.filter_popup.visible
+                    && !self.script_view.visible
+                    && !self.columns_popup.visible
+                    && !self.log_view.visible =>
+            {
+                self.jobs_list.page_down();
             }
 
             // Selection

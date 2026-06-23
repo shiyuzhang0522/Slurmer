@@ -5,4 +5,5 @@ pub mod jobslist;
 pub mod layout;
 pub mod logview;
 pub mod settings;
+pub mod text_view;
 pub mod theme;

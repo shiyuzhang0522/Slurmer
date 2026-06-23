@@ -51,10 +51,7 @@ pub fn draw_header(
     let title = Paragraph::new(Text::from(vec![Line::from(vec![
         Span::styled("SLURMER", Style::default().fg(palette.accent).bold()),
         Span::raw(" - "),
-        Span::styled(
-            "dark neon job console",
-            Style::default().fg(palette.accent_alt),
-        ),
+        Span::styled("HPC job console", Style::default().fg(palette.accent_alt)),
     ])]))
     .style(Style::default().bg(palette.surface).fg(palette.text))
     .block(
@@ -101,6 +98,7 @@ pub fn draw_footer(
         ("/", "Search"),
         ("s", "Settings"),
         ("↑/↓", "Navigate"),
+        ("PgUp/Dn", "Page"),
         ("Space", "Select"),
         ("Enter", "Script"),
         ("f", "Filter"),

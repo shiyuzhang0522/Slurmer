@@ -21,6 +21,7 @@ pub struct JobsList {
     search_query: String,
     pub sort_column: usize,
     pub sort_ascending: bool,
+    viewport_rows: usize,
 }
 
 impl JobsList {
@@ -33,6 +34,7 @@ impl JobsList {
             search_query: String::new(),
             sort_column: 0, // Default sort by job ID
             sort_ascending: true,
+            viewport_rows: 1,
         }
     }
 
@@ -179,6 +181,29 @@ impl JobsList {
         old_selection != Some(i)
     }
 
+    pub fn page_down(&mut self) -> bool {
+        self.move_by_page(false)
+    }
+
+    pub fn page_up(&mut self) -> bool {
+        self.move_by_page(true)
+    }
+
+    fn move_by_page(&mut self, upward: bool) -> bool {
+        if self.jobs.is_empty() {
+            return false;
+        }
+        let old = self.state.selected().unwrap_or(0);
+        let step = self.viewport_rows.max(1);
+        let next = if upward {
+            old.saturating_sub(step)
+        } else {
+            (old + step).min(self.jobs.len() - 1)
+        };
+        self.state.select(Some(next));
+        old != next
+    }
+
     /// Draw the jobs list widget
     pub fn render(
         &mut self,
@@ -188,6 +213,7 @@ impl JobsList {
         sort_columns: &[SortColumn],
         palette: Palette,
     ) {
+        self.viewport_rows = area.height.saturating_sub(3).max(1) as usize;
         // Update sorting if needed based on sort_columns
         if !sort_columns.is_empty() {
             self.update_sort(columns, sort_columns);
@@ -338,7 +364,15 @@ impl JobsList {
 
         // Create the table
         let job_count = self.jobs.len();
-        let title = format!("{} Jobs", job_count);
+        let selected = self.state.selected().unwrap_or(0);
+        let page_offset = (selected / self.viewport_rows.max(1)) * self.viewport_rows.max(1);
+        let (page, pages, start, end) =
+            crate::ui::text_view::page_metrics(page_offset, self.viewport_rows, job_count);
+        let title = if job_count == 0 {
+            "0 Jobs".to_string()
+        } else {
+            format!("{job_count} Jobs · Page {page}/{pages} · Rows {start}-{end}")
+        };
         let table = Table::new(rows, constraints)
             .header(header)
             .block(
@@ -399,5 +433,19 @@ mod tests {
         list.set_search_query("gpu".to_string());
         assert_eq!(list.jobs.len(), 2);
         assert_eq!(list.jobs[0].id, "2");
+    }
+
+    #[test]
+    fn page_navigation_clamps_to_bounds() {
+        let mut list = JobsList::new();
+        list.viewport_rows = 3;
+        list.update_jobs((0..8).map(|id| job(&id.to_string(), "job")).collect());
+        list.page_down();
+        assert_eq!(list.state.selected(), Some(3));
+        list.page_down();
+        list.page_down();
+        assert_eq!(list.state.selected(), Some(7));
+        list.page_up();
+        assert_eq!(list.state.selected(), Some(4));
     }
 }

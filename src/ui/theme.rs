@@ -4,15 +4,17 @@ use crate::slurm::JobState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Theme {
+    SakuraLight,
     DarkNeon,
     Classic,
 }
 
 impl Theme {
-    pub const ALL: [Theme; 2] = [Theme::DarkNeon, Theme::Classic];
+    pub const ALL: [Theme; 3] = [Theme::SakuraLight, Theme::DarkNeon, Theme::Classic];
 
     pub fn id(self) -> &'static str {
         match self {
+            Theme::SakuraLight => "sakura-light",
             Theme::DarkNeon => "dark-neon",
             Theme::Classic => "classic",
         }
@@ -20,6 +22,7 @@ impl Theme {
 
     pub fn label(self) -> &'static str {
         match self {
+            Theme::SakuraLight => "Sakura Cream",
             Theme::DarkNeon => "Dark Neon",
             Theme::Classic => "Classic",
         }
@@ -27,6 +30,7 @@ impl Theme {
 
     pub fn from_id(value: &str) -> Option<Self> {
         match value {
+            "sakura-light" => Some(Theme::SakuraLight),
             "dark-neon" => Some(Theme::DarkNeon),
             "classic" => Some(Theme::Classic),
             _ => None,
@@ -35,6 +39,20 @@ impl Theme {
 
     pub fn palette(self) -> Palette {
         match self {
+            Theme::SakuraLight => Palette {
+                background: Color::Rgb(255, 249, 242),
+                surface: Color::Rgb(255, 232, 238),
+                surface_alt: Color::Rgb(247, 211, 226),
+                text: Color::Rgb(83, 39, 61),
+                muted: Color::Rgb(137, 91, 117),
+                accent: Color::Rgb(213, 77, 132),
+                accent_alt: Color::Rgb(143, 100, 184),
+                border: Color::Rgb(191, 142, 188),
+                success: Color::Rgb(42, 133, 104),
+                warning: Color::Rgb(177, 112, 21),
+                danger: Color::Rgb(191, 54, 78),
+                info: Color::Rgb(62, 103, 168),
+            },
             Theme::DarkNeon => Palette {
                 background: Color::Rgb(20, 8, 28),
                 surface: Color::Rgb(37, 15, 49),
@@ -114,5 +132,14 @@ mod tests {
         let palette = Theme::DarkNeon.palette();
         assert_ne!(palette.accent, palette.background);
         assert_ne!(palette.surface, palette.background);
+    }
+
+    #[test]
+    fn sakura_theme_is_available() {
+        assert_eq!(Theme::from_id("sakura-light"), Some(Theme::SakuraLight));
+        assert_ne!(
+            Theme::SakuraLight.palette().background,
+            Theme::SakuraLight.palette().text
+        );
     }
 }

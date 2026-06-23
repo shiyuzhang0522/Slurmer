@@ -21,7 +21,7 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
-            theme: Theme::DarkNeon,
+            theme: Theme::SakuraLight,
             refresh_interval: 10,
             selected_columns: JobColumn::defaults(),
             sort_columns: vec![SortColumn {
@@ -187,5 +187,14 @@ mod tests {
         assert_eq!(parsed.refresh_interval, 10);
         assert_eq!(parsed.selected_columns, JobColumn::defaults());
         assert!(parsed.sort_columns.is_empty());
+    }
+
+    #[test]
+    fn existing_dark_neon_preference_is_preserved() {
+        let parsed = Preferences::from_toml(
+            "version = 1\ntheme = \"dark-neon\"\nrefresh_interval = 10\ncolumns = [\"id\"]\nsorts = []\n",
+        )
+        .unwrap();
+        assert_eq!(parsed.theme, Theme::DarkNeon);
     }
 }

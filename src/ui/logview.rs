@@ -1,19 +1,22 @@
-use color_eyre::Result;
+use std::{collections::HashMap, path::PathBuf, process::Command, time::Duration};
+
 use crossbeam::channel::{unbounded, Receiver};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
-use std::{collections::HashMap, iter::once, path::PathBuf, process::Command, time::Duration};
 
-use crate::ui::theme::Palette;
 use crate::utils::file_watcher::{FileWatcherError, FileWatcherHandle};
 
-/// Type of log to view
+use super::{
+    text_view::{page_metrics, sanitize_terminal_text, wrap_text, WrappedRow},
+    theme::Palette,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogTab {
     StdOut,
@@ -28,7 +31,7 @@ impl LogTab {
         };
     }
 
-    fn as_str(&self) -> &'static str {
+    fn as_str(self) -> &'static str {
         match self {
             LogTab::StdOut => "stdout",
             LogTab::StdErr => "stderr",
@@ -36,7 +39,6 @@ impl LogTab {
     }
 }
 
-/// LogView widget for displaying job output logs
 pub struct LogView {
     pub visible: bool,
     pub job_id: Option<String>,
@@ -48,18 +50,19 @@ pub struct LogView {
     file_watcher: Option<FileWatcherHandle>,
     file_receiver: Option<Receiver<Result<String, FileWatcherError>>>,
     refresh_interval: Duration,
-    /// Indicates the status of the current log file
     file_status: LogFileStatus,
+    viewport_rows: usize,
+    wrap_width: usize,
+    wrapped_rows: Vec<WrappedRow>,
+    follow_live: bool,
+    content_dirty: bool,
 }
 
-/// Status of the log file being watched
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LogFileStatus {
-    /// No file found or not set
     NotFound,
-    /// File exists but waiting for content
     Waiting,
-    /// Error occurred when accessing the file
+    Loaded,
     Error,
 }
 
@@ -77,358 +80,323 @@ impl LogView {
             file_receiver: None,
             refresh_interval: Duration::from_secs(2),
             file_status: LogFileStatus::NotFound,
+            viewport_rows: 1,
+            wrap_width: 0,
+            wrapped_rows: Vec::new(),
+            follow_live: true,
+            content_dirty: true,
         }
     }
 
-    /// Show the log view for a specific job
     pub fn show(&mut self, job_id: String) {
         self.change_job(job_id);
         self.visible = true;
     }
 
-    /// Hide the log view
     pub fn hide(&mut self) {
         self.visible = false;
-        // Stop watching files when hiding the view
         if let Some(watcher) = &mut self.file_watcher {
             watcher.set_file_path(None);
         }
     }
 
-    /// Change the job being viewed
     pub fn change_job(&mut self, job_id: String) {
         self.job_id = Some(job_id);
         self.stdout_path = None;
         self.stderr_path = None;
-        // self.content = String::new();
+        self.content.clear();
+        self.wrapped_rows.clear();
         self.scroll_position = 0;
+        self.follow_live = true;
+        self.content_dirty = true;
         self.file_status = LogFileStatus::NotFound;
-
-        // Fetch the log file paths
         self.fetch_log_paths();
 
-        // Setup file watcher if needed
         if self.file_watcher.is_none() {
             let (sender, receiver) = unbounded();
             self.file_watcher = Some(FileWatcherHandle::new(sender, self.refresh_interval));
             self.file_receiver = Some(receiver);
         }
-
-        // Update the watched file based on current tab
         self.update_watched_file();
     }
 
-    /// Toggle between stdout and stderr logs
     pub fn toggle_tab(&mut self) {
         self.current_tab.toggle();
+        self.content.clear();
+        self.wrapped_rows.clear();
         self.scroll_position = 0;
+        self.follow_live = true;
+        self.content_dirty = true;
         self.update_watched_file();
     }
 
-    /// Update the file being watched based on job_id and current_tab
     fn update_watched_file(&mut self) {
         if let Some(watcher) = &mut self.file_watcher {
             let path = match self.current_tab {
                 LogTab::StdOut => self.stdout_path.clone(),
                 LogTab::StdErr => self.stderr_path.clone(),
             };
-
             match path {
-                Some(p) if !p.is_empty() => {
-                    // File path exists, set status to waiting for content
-                    watcher.set_file_path(Some(PathBuf::from(&p)));
+                Some(path) if !path.is_empty() => {
+                    watcher.set_file_path(Some(PathBuf::from(path)));
                     self.file_status = LogFileStatus::Waiting;
                 }
                 _ => {
-                    // Either no path or empty path
                     watcher.set_file_path(None);
                     self.file_status = LogFileStatus::NotFound;
-                    self.content = String::new();
                 }
             }
         }
         self.check_refresh();
     }
 
-    /// Check for file updates and refresh content
     pub fn check_refresh(&mut self) {
-        // // Check if we need to refresh
-        // // let should_refresh = match self.last_refresh {
-        // //     Some(instant) => instant.elapsed() >= self.refresh_interval,
-        // //     None => true,
-        // // };
-        // // if instant is true, we always refresh, if not, we check the interval
-        // let should_refresh = if instant {
-        //     true
-        // } else {
-        //     self.last_refresh
-        //         .map_or(true, |instant| instant.elapsed() >= self.refresh_interval)
-        // };
-
+        let mut latest = None;
         if let Some(receiver) = self.file_receiver.as_ref() {
-            // Check for new content from the file watcher
             while let Ok(result) = receiver.try_recv() {
-                match result {
-                    Ok(content) => {
-                        // if !content.is_empty() {
-                        //     self.content = content;
-                        //     self.file_status = LogFileStatus::Loaded;
-                        // } else if self.file_status == LogFileStatus::Waiting {
-                        //     // Got empty content but file exists, keep waiting
-                        //     self.file_status = LogFileStatus::Waiting;
-                        // }
-                        self.content = content;
-                    }
-                    Err(e) => {
-                        self.content = format!("Error watching file: {}", e);
-                        self.file_status = LogFileStatus::Error;
-                    }
+                latest = Some(result);
+            }
+        }
+        if let Some(result) = latest {
+            match result {
+                Ok(content) => {
+                    self.content = content;
+                    self.file_status = LogFileStatus::Loaded;
+                    self.content_dirty = true;
+                }
+                Err(error) => {
+                    self.content = format!("Error watching file: {error}");
+                    self.file_status = LogFileStatus::Error;
+                    self.content_dirty = true;
                 }
             }
-
-            // self.last_refresh = Some(Instant::now());
         }
     }
 
-    /// Scroll the log view up
     pub fn scroll_up(&mut self) {
-        if self.scroll_position > 0 {
-            self.scroll_position -= 1;
-        }
+        self.follow_live = false;
+        self.scroll_position = self.scroll_position.saturating_sub(1);
     }
 
-    /// Scroll the log view down
     pub fn scroll_down(&mut self) {
-        // Need to calculate max scroll based on content and view size
-        // This is a simplification - in a real implementation you would
-        // calculate this based on content height and view height
-        let line_count = self.content.lines().count();
-        if self.scroll_position < line_count.saturating_sub(1) {
-            self.scroll_position += 1;
-        }
+        self.scroll_position = (self.scroll_position + 1).min(self.max_offset());
+        self.follow_live = self.scroll_position == self.max_offset();
     }
 
-    /// Page up in the log view
     pub fn page_up(&mut self) {
-        // Move up by a page (10 lines)
-        self.scroll_position = self.scroll_position.saturating_sub(10);
+        self.follow_live = false;
+        self.scroll_position = self
+            .scroll_position
+            .saturating_sub(self.viewport_rows.max(1));
     }
 
-    /// Page down in the log view
     pub fn page_down(&mut self) {
-        // Move down by a page (10 lines)
-        let line_count = self.content.lines().count();
-        let new_scroll = self.scroll_position + 10;
-        self.scroll_position = if new_scroll < line_count {
-            new_scroll
-        } else {
-            line_count.saturating_sub(1)
-        };
+        self.scroll_position =
+            (self.scroll_position + self.viewport_rows.max(1)).min(self.max_offset());
+        self.follow_live = self.scroll_position == self.max_offset();
     }
 
-    /// Render the log view
-    pub fn render(&self, frame: &mut Frame, area: Rect, palette: Palette) {
+    pub fn resume_live(&mut self) {
+        self.follow_live = true;
+        self.scroll_position = self.max_offset();
+    }
+
+    pub fn render(&mut self, frame: &mut Frame, area: Rect, palette: Palette) {
         if !self.visible {
             return;
         }
+        frame.render_widget(Clear, area);
 
-        let log_area = area;
-        frame.render_widget(Clear, log_area);
+        let width = area.width.saturating_sub(2).max(1) as usize;
+        self.viewport_rows = area.height.saturating_sub(2).max(1) as usize;
+        if self.wrap_width != width {
+            self.wrap_width = width;
+            self.content_dirty = true;
+        }
+        if self.content_dirty {
+            self.rewrap();
+            self.content_dirty = false;
+        }
+        if self.follow_live {
+            self.scroll_position = self.max_offset();
+        } else {
+            self.scroll_position = self.scroll_position.min(self.max_offset());
+        }
 
-        let title = match &self.job_id {
-            Some(id) => format!("Job {} - {}", id, self.current_tab.as_str()),
-            None => format!("Log View - {}", self.current_tab.as_str()),
-        };
+        let (page, pages, start, end) = page_metrics(
+            self.scroll_position,
+            self.viewport_rows,
+            self.wrapped_rows.len(),
+        );
+        let source_start = self
+            .wrapped_rows
+            .get(self.scroll_position)
+            .map(|row| row.source_line)
+            .unwrap_or(0);
+        let source_end = self
+            .wrapped_rows
+            .get(end.saturating_sub(1))
+            .map(|row| row.source_line)
+            .unwrap_or(0);
+        let mode = if self.follow_live { "LIVE" } else { "PAUSED" };
+        let title = format!(
+            " Job {} · {} · Page {page}/{pages} · Rows {start}-{end} · Lines {source_start}-{source_end} · ",
+            self.job_id.as_deref().unwrap_or("unknown"),
+            self.current_tab.as_str()
+        );
 
-        let help_text =
-            " [↑/↓] Scroll | [Shift+↑/↓] Toggle Job | [o] Toggle stdout/stderr | [q] Close ";
-
-        let log_text = match (self.file_status, self.content.is_empty()) {
-            (LogFileStatus::NotFound, _) => format!(
+        let text = match self.file_status {
+            LogFileStatus::NotFound => Text::from(Line::raw(format!(
                 "No {} log file found for job {}",
                 self.current_tab.as_str(),
                 self.job_id.as_deref().unwrap_or("unknown")
+            ))),
+            LogFileStatus::Waiting if self.content.is_empty() => {
+                Text::from(Line::raw("Waiting for log output…"))
+            }
+            LogFileStatus::Error if self.content.is_empty() => {
+                Text::from(Line::raw("Unable to access this job log."))
+            }
+            _ => Text::from(
+                self.wrapped_rows
+                    .iter()
+                    .skip(self.scroll_position)
+                    .take(self.viewport_rows)
+                    .map(|row| Line::raw(row.text.clone()))
+                    .collect::<Vec<_>>(),
             ),
-            _ => self.content.clone(),
         };
 
-        let fit_text = Self::fit_text(
-            &log_text,
-            log_area.height as usize,
-            log_area.width as usize,
-            self.scroll_position,
-            false,
-        );
-        // eprintln!("fit_text: {}", log_text);
-
-        let log_paragraph = Paragraph::new(fit_text)
+        let badge_color = if self.follow_live {
+            palette.success
+        } else {
+            palette.warning
+        };
+        let paragraph = Paragraph::new(text)
             .style(Style::default().fg(palette.text).bg(palette.background))
             .block(
                 Block::default()
-                    .title(format!("{}{}", title, help_text))
+                    .title(Line::from(vec![
+                        Span::raw(title),
+                        Span::styled(
+                            mode,
+                            Style::default()
+                                .fg(badge_color)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ]))
+                    .title_bottom(
+                        " ↑/↓ scroll · PgUp/PgDn page · End live · o stdout/stderr · Shift+↑/↓ job · q close ",
+                    )
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(palette.border)),
-            )
-            .wrap(Wrap { trim: false })
-            .scroll((self.scroll_position as u16, 0));
-
-        frame.render_widget(log_paragraph, log_area);
+            );
+        frame.render_widget(paragraph, area);
     }
 
-    pub fn handle_key(&mut self, key: KeyEvent) -> () {
+    pub fn handle_key(&mut self, key: KeyEvent) {
         match (key.modifiers, key.code) {
-            (_, KeyCode::Char('o')) => {
-                // Toggle between stdout and stderr logs
-                self.toggle_tab();
-            }
-            (_, KeyCode::Char('q')) => {
-                // Close the log view
-                self.hide();
-            }
-            (_, KeyCode::Up) => {
-                // Scroll up
-                self.scroll_up();
-            }
-            (_, KeyCode::Down) => {
-                // Scroll down
-                self.scroll_down();
-            }
-            (_, KeyCode::PageUp) | (KeyModifiers::CONTROL, KeyCode::Char('u')) => {
-                // Page up
-                self.page_up();
-            }
+            (_, KeyCode::Char('o')) => self.toggle_tab(),
+            (_, KeyCode::Char('q')) => self.hide(),
+            (_, KeyCode::Up) => self.scroll_up(),
+            (_, KeyCode::Down) => self.scroll_down(),
+            (_, KeyCode::PageUp) | (KeyModifiers::CONTROL, KeyCode::Char('u')) => self.page_up(),
             (_, KeyCode::PageDown) | (KeyModifiers::CONTROL, KeyCode::Char('d')) => {
-                // Page down
-                self.page_down();
+                self.page_down()
             }
-            _ => {
-                // Ignore other keys
+            (_, KeyCode::Home) => {
+                self.follow_live = false;
+                self.scroll_position = 0;
             }
+            (_, KeyCode::End) => self.resume_live(),
+            _ => {}
         }
     }
 
-    fn fit_text(s: &str, lines: usize, cols: usize, offset: usize, _wrap: bool) -> Text {
-        // Process text by handling carriage returns
-        let processed_lines: Vec<String> = s
-            .lines()
-            .map(|line| {
-                // For each line, if it contains carriage returns, keep only the content after the last one
-                if line.contains('\r') {
-                    let parts: Vec<&str> = line.split('\r').collect();
-                    parts.last().unwrap_or(&"").to_string()
-                } else {
-                    line.to_string()
-                }
-            })
-            .collect();
-
-        // Join the processed lines back together
-        let processed_text = processed_lines.join("\n");
-
-        // Process the clean text (without intermediate carriage returns)
-        let lines_iter = processed_text.lines();
-
-        // Create the iterator for processing text lines
-        let line_spans = lines_iter
-            .rev()
-            .skip(offset)
-            .flat_map(|l| {
-                let chunks = Self::chunked_string(l, cols, cols.saturating_sub(2));
-                chunks
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, chunk)| {
-                        if i == 0 {
-                            Line::raw(chunk.to_string())
-                        } else {
-                            Line::default().spans(vec![
-                                Span::styled("↪ ", Style::default().add_modifier(Modifier::DIM)),
-                                Span::raw(chunk.to_string()),
-                            ])
-                        }
-                    })
-                    .rev()
-            })
-            .take(lines);
-
-        // Collect and build the final Text widget
-        let collected_lines: Vec<Line> = line_spans.collect();
-        Text::from(collected_lines.into_iter().rev().collect::<Vec<Line>>())
+    fn rewrap(&mut self) {
+        let clean = sanitize_terminal_text(&self.content);
+        self.wrapped_rows = wrap_text(&clean, self.wrap_width.max(1));
+        self.scroll_position = self.scroll_position.min(self.max_offset());
     }
 
-    fn chunked_string(s: &str, first_chunk_size: usize, chunk_size: usize) -> Vec<&str> {
-        let stepped_indices = s
-            .char_indices()
-            .map(|(i, _)| i)
-            .enumerate()
-            .filter(|&(i, _)| {
-                if i > (first_chunk_size) {
-                    chunk_size > 0 && (i - first_chunk_size) % chunk_size == 0
-                } else {
-                    i == 0 || i == first_chunk_size
-                }
-            })
-            .map(|(_, e)| e)
-            .collect::<Vec<_>>();
-        let windows = stepped_indices.windows(2).collect::<Vec<_>>();
-
-        let iter = windows.iter().map(|w| &s[w[0]..w[1]]);
-        let last_index = *stepped_indices.last().unwrap_or(&0);
-        iter.chain(once(&s[last_index..])).collect()
+    fn max_offset(&self) -> usize {
+        self.wrapped_rows
+            .len()
+            .saturating_sub(self.viewport_rows.max(1))
     }
 
-    /// Fetch the stdout and stderr paths for the current job
     fn fetch_log_paths(&mut self) {
-        if let Some(job_id) = &self.job_id {
-            let output = Command::new("scontrol")
-                .args(["show", "job", job_id, "-o"])
-                .output();
-
-            if let Ok(output) = output {
-                if output.status.success() {
-                    let output_str = String::from_utf8_lossy(&output.stdout);
-                    let key_value_pairs = parse_scontrol_output(&output_str);
-
-                    self.stdout_path = key_value_pairs.get("StdOut").map(|s| s.to_string());
-                    self.stderr_path = key_value_pairs.get("StdErr").map(|s| s.to_string());
-
-                    // Check if we have valid paths for the current tab
-                    let has_path = match self.current_tab {
-                        LogTab::StdOut => {
-                            self.stdout_path.as_deref().is_some_and(|p| !p.is_empty())
-                        }
-                        LogTab::StdErr => {
-                            self.stderr_path.as_deref().is_some_and(|p| !p.is_empty())
-                        }
-                    };
-
-                    if has_path {
-                        self.file_status = LogFileStatus::Waiting;
-                    } else {
-                        self.file_status = LogFileStatus::NotFound;
-                    }
-                } else {
-                    self.file_status = LogFileStatus::Error;
-                }
-            } else {
-                self.file_status = LogFileStatus::Error;
-            }
-        } else {
+        let Some(job_id) = &self.job_id else {
             self.file_status = LogFileStatus::NotFound;
+            return;
+        };
+        let output = Command::new("scontrol")
+            .args(["show", "job", job_id, "-o"])
+            .output();
+        let Ok(output) = output else {
+            self.file_status = LogFileStatus::Error;
+            return;
+        };
+        if !output.status.success() {
+            self.file_status = LogFileStatus::Error;
+            return;
         }
+
+        let values = parse_scontrol_output(&String::from_utf8_lossy(&output.stdout));
+        self.stdout_path = values.get("StdOut").cloned();
+        self.stderr_path = values.get("StdErr").cloned();
+        let has_path = match self.current_tab {
+            LogTab::StdOut => self
+                .stdout_path
+                .as_deref()
+                .is_some_and(|path| !path.is_empty()),
+            LogTab::StdErr => self
+                .stderr_path
+                .as_deref()
+                .is_some_and(|path| !path.is_empty()),
+        };
+        self.file_status = if has_path {
+            LogFileStatus::Waiting
+        } else {
+            LogFileStatus::NotFound
+        };
     }
 }
 
 fn parse_scontrol_output(output: &str) -> HashMap<String, String> {
-    let mut result = HashMap::new();
+    output
+        .split_whitespace()
+        .filter_map(|part| part.split_once('='))
+        .map(|(key, value)| (key.to_string(), value.to_string()))
+        .collect()
+}
 
-    for part in output.split_whitespace() {
-        if let Some(index) = part.find('=') {
-            let key = &part[0..index];
-            let value = &part[(index + 1)..];
-            result.insert(key.to_string(), value.to_string());
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scrolling_up_pauses_and_end_resumes_live_mode() {
+        let mut view = LogView::new();
+        view.viewport_rows = 2;
+        view.wrap_width = 20;
+        view.content = "1\n2\n3\n4".to_string();
+        view.rewrap();
+        view.resume_live();
+        assert!(view.follow_live);
+        view.scroll_up();
+        assert!(!view.follow_live);
+        view.resume_live();
+        assert!(view.follow_live);
+        assert_eq!(view.scroll_position, view.max_offset());
     }
 
-    result
+    #[test]
+    fn tab_switch_restores_live_follow() {
+        let mut view = LogView::new();
+        view.follow_live = false;
+        view.toggle_tab();
+        assert!(view.follow_live);
+        assert_eq!(view.scroll_position, 0);
+    }
 }

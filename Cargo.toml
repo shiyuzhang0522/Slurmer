@@ -1,6 +1,6 @@
 [package]
 name = "slurmer"
-version = "0.2.0"
+version = "0.3.0"
 description = "A TUI application for monitoring and managing SLURM jobs."
 authors = [
     "Shelley <shiyuzhang0522@gmail.com>",
@@ -21,3 +21,4 @@ color-eyre = "0.6.3"
 tokio = { version = "1.36.0", features = ["rt-multi-thread"] }
 async-process = "2.1.0"
 regex = "1.10.2"
+unicode-width = "0.2.0"

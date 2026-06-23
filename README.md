@@ -3,34 +3,33 @@
 Slurmer is a fast terminal interface for monitoring and managing SLURM jobs on
 an HPC cluster.
 
-This fork introduces a dark neon pink-purple interface, fuzzy job search,
-persistent UI preferences, and reliability improvements. It is based on the
+This fork introduces a cute Sakura Cream interface, fuzzy job search,
+viewport-aware paging, safer log rendering, persistent UI preferences, and
+reliability improvements. It is based on the
 original [wjwei-handsome/Slurmer](https://github.com/wjwei-handsome/Slurmer)
 project.
 
-Current version: **0.2.0**
+Current version: **0.3.0**
 
 ## Features
 
-- Dark Neon theme with deep plum surfaces and pink-purple accents
+- Sakura Cream light theme with blush-pink surfaces and lavender borders
+- Dark Neon and Classic themes remain available
 - Real-time job monitoring with configurable automatic refresh
+- Page Up/Page Down navigation in jobs, logs, and scripts
 - Fuzzy search across job ID, name, user, partition, QoS, and node
 - Filters for user, state, partition, QoS, job name, and node
 - Customizable columns and multi-column sorting
-- Job script and stdout/stderr log viewers
+- Safely sanitized, soft-wrapped job script and stdout/stderr log viewers
+- LIVE log following with PAUSED history browsing and visible page/line ranges
 - Select and cancel one or multiple jobs
 - Persistent theme, refresh interval, column, and sorting preferences
-- Classic theme available as an alternative
-
-![Slurmer monitor](./images/monitor.png)
 
 ## Requirements
 
 - A working SLURM installation with `squeue`, `sinfo`, `sacctmgr`, `scontrol`,
   and `scancel`
 - A Rust toolchain for building from source
-- [`bat`](https://github.com/sharkdp/bat) is optional and provides highlighted
-  job-script output
 
 ## Build and install on the HPC
 
@@ -66,6 +65,8 @@ slurmer
 | Key | Action |
 |---|---|
 | <kbd>↑</kbd>/<kbd>↓</kbd> | Navigate jobs |
+| <kbd>Page Up</kbd>/<kbd>Page Down</kbd> | Move by one visible page |
+| <kbd>Ctrl+u</kbd>/<kbd>Ctrl+d</kbd> | Alternative page navigation |
 | <kbd>Shift</kbd> + <kbd>↑</kbd>/<kbd>↓</kbd> | Change jobs in script/log views |
 | <kbd>Space</kbd> | Select or deselect the highlighted job |
 | <kbd>a</kbd> | Select or deselect all displayed jobs |
@@ -75,6 +76,7 @@ slurmer
 | <kbd>c</kbd> | Configure columns and sorting |
 | <kbd>Enter</kbd> | View the selected job script |
 | <kbd>v</kbd> | View stdout/stderr logs |
+| <kbd>End</kbd> | Resume LIVE following in the log viewer |
 | <kbd>r</kbd> | Refresh the job list |
 | <kbd>x</kbd> | Cancel selected jobs after confirmation |
 | <kbd>Esc</kbd> | Clear search, close a popup, or quit |
@@ -92,8 +94,9 @@ Theme, refresh interval, selected columns, and sort order are saved to:
   `~/.config/slurmer/config.toml`
 - Windows: `%APPDATA%\slurmer\config.toml`
 
-Job filters and fuzzy-search queries remain session-only. Dark Neon is the
-default theme; Classic can be selected by pressing <kbd>s</kbd>.
+Job filters and fuzzy-search queries remain session-only. Sakura Cream is the
+default for new configurations. Existing saved Dark Neon or Classic choices
+are preserved, and all themes can be selected by pressing <kbd>s</kbd>.
 
 ## Updating the HPC installation
 
