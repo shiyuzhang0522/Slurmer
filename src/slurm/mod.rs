@@ -1,4 +1,5 @@
 pub mod command;
+pub mod sacct;
 pub mod squeue;
 
 use std::fmt;

@@ -104,6 +104,7 @@ pub fn draw_footer(
         ("f", "Filter"),
         ("c", "Columns"),
         ("v", "Log"),
+        ("h", "History"),
         ("a", "SelectAll"),
         ("r", "Refresh"),
         ("x", "Cancel"),

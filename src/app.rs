@@ -15,12 +15,14 @@ use crate::{
     config::Preferences,
     slurm::{
         command::{execute_scancel, get_partitions, get_qos},
+        sacct::run_sacct,
         squeue::{run_squeue, SqueueOptions},
         JobState,
     },
     ui::{
         columns::{ColumnsAction, ColumnsPopup, JobColumn, SortColumn, SortOrder},
         filter::{FilterAction, FilterPopup},
+        history::{HistoryAction, HistoryView},
         jobscript::JobScript,
         jobslist::JobsList,
         layout::{centered_popup_area, draw_footer, draw_header, draw_main_layout},
@@ -76,6 +78,7 @@ pub struct App {
     /// Confirm cancel popup state
     cancel_confirm: bool,
     settings_popup: SettingsPopup,
+    history_view: HistoryView,
     theme: Theme,
     search_mode: bool,
     search_query: String,
@@ -94,7 +97,7 @@ impl App {
         // Default username for squeue
         let username = get_username();
         let squeue_options = SqueueOptions {
-            user: Some(username),
+            user: Some(username.clone()),
             ..Default::default()
         };
 
@@ -134,6 +137,7 @@ impl App {
             sort_columns,
             cancel_confirm: false,
             settings_popup: SettingsPopup::new(theme, job_refresh_interval),
+            history_view: HistoryView::new(Some(username)),
             theme,
             search_mode: false,
             search_query: String::new(),
@@ -267,6 +271,22 @@ impl App {
         Ok(())
     }
 
+    fn refresh_history(&mut self) -> Result<()> {
+        let options = self.history_view.options.clone();
+        let jobs = self.runtime.block_on(async { run_sacct(&options).await })?;
+        let count = jobs.len();
+        self.history_view.update_jobs(jobs);
+        self.set_status_message(
+            format!(
+                "Loaded {count} history jobs ({}d, {})",
+                options.days,
+                options.state_filter.label()
+            ),
+            3,
+        );
+        Ok(())
+    }
+
     /// Render the application UI
     pub fn render(&mut self, frame: &mut Frame) {
         let palette = self.palette();
@@ -309,6 +329,11 @@ impl App {
         if self.log_view.visible {
             let popup_area = centered_popup_area(frame.area(), 80, 80);
             self.render_log_view(frame, popup_area);
+        }
+
+        if self.history_view.visible {
+            let popup_area = centered_popup_area(frame.area(), 90, 80);
+            self.render_history_view(frame, popup_area);
         }
 
         // If cancel confirm popup is visible, draw it
@@ -355,6 +380,11 @@ impl App {
     fn render_log_view(&mut self, frame: &mut Frame, area: Rect) {
         let palette = self.palette();
         self.log_view.render(frame, area, palette);
+    }
+
+    fn render_history_view(&mut self, frame: &mut Frame, area: Rect) {
+        let palette = self.palette();
+        self.history_view.render(frame, area, palette);
     }
 
     /// Render the filter popup
@@ -557,6 +587,19 @@ impl App {
             return;
         }
 
+        if self.history_view.visible {
+            match self.history_view.handle_key(key) {
+                HistoryAction::Close => self.history_view.hide(),
+                HistoryAction::Refresh => {
+                    if let Err(error) = self.refresh_history() {
+                        self.set_status_message(format!("Failed to load history: {error}"), 4);
+                    }
+                }
+                HistoryAction::None => {}
+            }
+            return;
+        }
+
         match (key.modifiers, key.code) {
             // Quit application
             (_, KeyCode::Esc) | (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
@@ -567,6 +610,7 @@ impl App {
                     || self.script_view.visible
                     || self.columns_popup.visible
                     || self.log_view.visible
+                    || self.history_view.visible
                     || self.cancel_confirm
                 {
                     if self.filter_popup.visible {
@@ -578,6 +622,7 @@ impl App {
                     self.script_view.visible = false;
                     self.columns_popup.visible = false;
                     self.log_view.hide();
+                    self.history_view.hide();
                     self.cancel_confirm = false;
                 } else {
                     self.quit();
@@ -719,6 +764,19 @@ impl App {
                 self.columns_popup =
                     ColumnsPopup::new(self.selected_columns.clone(), self.sort_columns.clone());
                 self.columns_popup.visible = true;
+            }
+
+            (_, KeyCode::Char('h'))
+                if !self.filter_popup.visible
+                    && !self.script_view.visible
+                    && !self.columns_popup.visible
+                    && !self.log_view.visible
+                    && !self.cancel_confirm =>
+            {
+                self.history_view.show();
+                if let Err(error) = self.refresh_history() {
+                    self.set_status_message(format!("Failed to load history: {error}"), 4);
+                }
             }
 
             // Handle filter popup key events
@@ -893,6 +951,7 @@ impl App {
             && !self.script_view.visible
             && !self.columns_popup.visible
             && !self.settings_popup.visible
+            && !self.history_view.visible
             && self.last_refresh.elapsed().as_secs() >= self.job_refresh_interval
         {
             if let Err(e) = self.refresh_jobs() {

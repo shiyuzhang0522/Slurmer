@@ -9,7 +9,15 @@ reliability improvements. It is based on the
 original [wjwei-handsome/Slurmer](https://github.com/wjwei-handsome/Slurmer)
 project.
 
-Current version: **0.3.0**
+Current version: **0.4.0**
+
+## What's new in 0.4.0
+
+- Added a `sacct`-backed job history popup for recent completed, failed,
+  cancelled, and timed-out jobs
+- Added history filters for state groups and 1/7/30 day accounting windows
+- Added fuzzy search and pageable navigation inside the history popup
+- Added `h` as the shortcut for opening job accounting history
 
 ## Features
 
@@ -22,13 +30,14 @@ Current version: **0.3.0**
 - Customizable columns and multi-column sorting
 - Safely sanitized, soft-wrapped job script and stdout/stderr log viewers
 - LIVE log following with PAUSED history browsing and visible page/line ranges
+- `sacct` job accounting history for completed, failed, cancelled, and timed-out jobs
 - Select and cancel one or multiple jobs
 - Persistent theme, refresh interval, column, and sorting preferences
 
 ## Requirements
 
-- A working SLURM installation with `squeue`, `sinfo`, `sacctmgr`, `scontrol`,
-  and `scancel`
+- A working SLURM installation with `squeue`, `sacct`, `sinfo`, `sacctmgr`,
+  `scontrol`, and `scancel`
 - A Rust toolchain for building from source
 
 ## Build and install on the HPC
@@ -76,12 +85,17 @@ slurmer
 | <kbd>c</kbd> | Configure columns and sorting |
 | <kbd>Enter</kbd> | View the selected job script |
 | <kbd>v</kbd> | View stdout/stderr logs |
+| <kbd>h</kbd> | View recent `sacct` job history |
 | <kbd>End</kbd> | Resume LIVE following in the log viewer |
 | <kbd>r</kbd> | Refresh the job list |
 | <kbd>x</kbd> | Cancel selected jobs after confirmation |
 | <kbd>Esc</kbd> | Clear search, close a popup, or quit |
 
 Additional controls are displayed inside each popup.
+
+Inside the history popup, press <kbd>f</kbd> to cycle state groups,
+<kbd>t</kbd> to cycle 1/7/30 day ranges, <kbd>/</kbd> to fuzzy-search,
+<kbd>r</kbd> to refresh, and <kbd>q</kbd>/<kbd>Esc</kbd> to close.
 
 ## Configuration
 
