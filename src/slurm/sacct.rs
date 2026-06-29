@@ -8,34 +8,46 @@ const DEFAULT_FORMAT: &str =
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccountingStateFilter {
     All,
-    Failed,
     Completed,
-    CancelledOrTimeout,
+    Failed,
+    Cancelled,
+    Timeout,
+    NodeFail,
+    Preempted,
 }
 
 impl AccountingStateFilter {
-    pub const ALL: [AccountingStateFilter; 4] = [
+    pub const ALL: [AccountingStateFilter; 7] = [
         AccountingStateFilter::All,
-        AccountingStateFilter::Failed,
         AccountingStateFilter::Completed,
-        AccountingStateFilter::CancelledOrTimeout,
+        AccountingStateFilter::Failed,
+        AccountingStateFilter::Cancelled,
+        AccountingStateFilter::Timeout,
+        AccountingStateFilter::NodeFail,
+        AccountingStateFilter::Preempted,
     ];
 
     pub fn label(self) -> &'static str {
         match self {
             AccountingStateFilter::All => "all",
-            AccountingStateFilter::Failed => "failed",
             AccountingStateFilter::Completed => "completed",
-            AccountingStateFilter::CancelledOrTimeout => "cancelled/timeout",
+            AccountingStateFilter::Failed => "failed",
+            AccountingStateFilter::Cancelled => "cancelled",
+            AccountingStateFilter::Timeout => "timeout",
+            AccountingStateFilter::NodeFail => "node_fail",
+            AccountingStateFilter::Preempted => "preempted",
         }
     }
 
     fn states(self) -> Option<&'static str> {
         match self {
             AccountingStateFilter::All => None,
-            AccountingStateFilter::Failed => Some("FAILED,NODE_FAIL,BOOT_FAIL,PREEMPTED"),
             AccountingStateFilter::Completed => Some("COMPLETED"),
-            AccountingStateFilter::CancelledOrTimeout => Some("CANCELLED,TIMEOUT"),
+            AccountingStateFilter::Failed => Some("FAILED"),
+            AccountingStateFilter::Cancelled => Some("CANCELLED"),
+            AccountingStateFilter::Timeout => Some("TIMEOUT"),
+            AccountingStateFilter::NodeFail => Some("NODE_FAIL"),
+            AccountingStateFilter::Preempted => Some("PREEMPTED"),
         }
     }
 
@@ -203,7 +215,7 @@ mod tests {
         );
         assert_eq!(
             args[args.iter().position(|arg| arg == "--state").unwrap() + 1],
-            "FAILED,NODE_FAIL,BOOT_FAIL,PREEMPTED"
+            "FAILED"
         );
     }
 
@@ -211,6 +223,30 @@ mod tests {
     fn all_state_filter_omits_state_argument() {
         let args = SacctOptions::default().to_args();
         assert!(!args.iter().any(|arg| arg == "--state"));
+    }
+
+    #[test]
+    fn state_filters_cycle_and_map_to_sacct_states() {
+        let expected = [
+            (AccountingStateFilter::All, None),
+            (AccountingStateFilter::Completed, Some("COMPLETED")),
+            (AccountingStateFilter::Failed, Some("FAILED")),
+            (AccountingStateFilter::Cancelled, Some("CANCELLED")),
+            (AccountingStateFilter::Timeout, Some("TIMEOUT")),
+            (AccountingStateFilter::NodeFail, Some("NODE_FAIL")),
+            (AccountingStateFilter::Preempted, Some("PREEMPTED")),
+        ];
+
+        for (filter, state) in expected {
+            assert_eq!(filter.states(), state);
+        }
+
+        let mut filter = AccountingStateFilter::All;
+        for expected_filter in AccountingStateFilter::ALL.into_iter().skip(1) {
+            filter = filter.next();
+            assert_eq!(filter, expected_filter);
+        }
+        assert_eq!(filter.next(), AccountingStateFilter::All);
     }
 
     #[test]

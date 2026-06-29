@@ -15,8 +15,9 @@ Current version: **0.4.0**
 
 - Added a `sacct`-backed job history popup for recent completed, failed,
   cancelled, and timed-out jobs
-- Added history filters for state groups and 1/7/30 day accounting windows
+- Added history filters for concrete job states and 1/7/30 day accounting windows
 - Added fuzzy search and pageable navigation inside the history popup
+- Added stdout/stderr log viewing from selected history jobs
 - Added `h` as the shortcut for opening job accounting history
 
 ## Features
@@ -93,8 +94,9 @@ slurmer
 
 Additional controls are displayed inside each popup.
 
-Inside the history popup, press <kbd>f</kbd> to cycle state groups,
+Inside the history popup, press <kbd>f</kbd> to cycle state filters,
 <kbd>t</kbd> to cycle 1/7/30 day ranges, <kbd>/</kbd> to fuzzy-search,
+<kbd>v</kbd> to view stdout/stderr logs for the selected history job,
 <kbd>r</kbd> to refresh, and <kbd>q</kbd>/<kbd>Esc</kbd> to close.
 
 ## Configuration

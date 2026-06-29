@@ -66,10 +66,6 @@ impl JobsList {
         );
     }
 
-    pub fn search_query(&self) -> &str {
-        &self.search_query
-    }
-
     pub fn total_count(&self) -> usize {
         self.all_jobs.len()
     }

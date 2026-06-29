@@ -325,15 +325,15 @@ impl App {
             self.render_columns_popup(frame, popup_area);
         }
 
-        // If log view is visible, draw it and check if we need to refresh its content
-        if self.log_view.visible {
-            let popup_area = centered_popup_area(frame.area(), 80, 80);
-            self.render_log_view(frame, popup_area);
-        }
-
         if self.history_view.visible {
             let popup_area = centered_popup_area(frame.area(), 90, 80);
             self.render_history_view(frame, popup_area);
+        }
+
+        // Draw logs after history so history-opened logs appear on top.
+        if self.log_view.visible {
+            let popup_area = centered_popup_area(frame.area(), 80, 80);
+            self.render_log_view(frame, popup_area);
         }
 
         // If cancel confirm popup is visible, draw it
@@ -587,9 +587,48 @@ impl App {
             return;
         }
 
+        if self.log_view.visible {
+            match (key.modifiers, key.code) {
+                (_, KeyCode::Esc) | (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
+                    self.log_view.hide();
+                }
+                (KeyModifiers::SHIFT, KeyCode::Up) if self.history_view.visible => {
+                    if self.history_view.previous() {
+                        if let Some(job) = self.history_view.selected_job() {
+                            self.log_view.change_job(job.id.clone());
+                        }
+                    }
+                }
+                (KeyModifiers::SHIFT, KeyCode::Down) if self.history_view.visible => {
+                    if self.history_view.next() {
+                        if let Some(job) = self.history_view.selected_job() {
+                            self.log_view.change_job(job.id.clone());
+                        }
+                    }
+                }
+                (KeyModifiers::SHIFT, KeyCode::Up) => {
+                    if self.jobs_list.previous() {
+                        if let Some(job) = self.jobs_list.selected_job() {
+                            self.log_view.change_job(job.id.clone());
+                        }
+                    }
+                }
+                (KeyModifiers::SHIFT, KeyCode::Down) => {
+                    if self.jobs_list.next() {
+                        if let Some(job) = self.jobs_list.selected_job() {
+                            self.log_view.change_job(job.id.clone());
+                        }
+                    }
+                }
+                _ => self.log_view.handle_key(key),
+            }
+            return;
+        }
+
         if self.history_view.visible {
             match self.history_view.handle_key(key) {
                 HistoryAction::Close => self.history_view.hide(),
+                HistoryAction::OpenLog(job_id) => self.log_view.show(job_id),
                 HistoryAction::Refresh => {
                     if let Err(error) = self.refresh_history() {
                         self.set_status_message(format!("Failed to load history: {error}"), 4);

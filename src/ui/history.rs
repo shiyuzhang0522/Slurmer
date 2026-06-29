@@ -8,7 +8,7 @@ use ratatui::{
 
 use crate::{
     search::fuzzy_score,
-    slurm::sacct::{AccountingJob, AccountingStateFilter, SacctOptions},
+    slurm::sacct::{AccountingJob, SacctOptions},
 };
 
 use super::{text_view::page_metrics, theme::Palette};
@@ -17,6 +17,7 @@ const DAY_CHOICES: [u16; 3] = [1, 7, 30];
 
 pub enum HistoryAction {
     Close,
+    OpenLog(String),
     Refresh,
     None,
 }
@@ -159,7 +160,7 @@ impl HistoryView {
             Block::default()
                 .title(title)
                 .title_bottom(
-                    " ↑/↓ scroll · PgUp/PgDn page · / search · f state · t range · r refresh · q close ",
+                    " ↑/↓ scroll · PgUp/PgDn page · / search · f state · t range · v log · r refresh · q close ",
                 )
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(palette.border))
@@ -209,6 +210,10 @@ impl HistoryView {
                 self.search_mode = true;
                 HistoryAction::None
             }
+            (_, KeyCode::Char('v')) => self
+                .selected_job()
+                .map(|job| HistoryAction::OpenLog(job.id.clone()))
+                .unwrap_or(HistoryAction::None),
             (_, KeyCode::Char('r')) => HistoryAction::Refresh,
             (_, KeyCode::Char('f')) => {
                 self.options.state_filter = self.options.state_filter.next();
@@ -264,25 +269,28 @@ impl HistoryView {
         self.jobs = scored.into_iter().map(|(_, job)| job).collect();
     }
 
-    fn selected_job(&self) -> Option<&AccountingJob> {
+    pub fn selected_job(&self) -> Option<&AccountingJob> {
         self.state.selected().and_then(|index| self.jobs.get(index))
     }
 
-    fn next(&mut self) {
+    pub fn next(&mut self) -> bool {
         if self.jobs.is_empty() {
-            return;
+            return false;
         }
         let index = self.state.selected().unwrap_or(0);
-        self.state
-            .select(Some((index + 1).min(self.jobs.len() - 1)));
+        let next = (index + 1).min(self.jobs.len() - 1);
+        self.state.select(Some(next));
+        index != next
     }
 
-    fn previous(&mut self) {
+    pub fn previous(&mut self) -> bool {
         if self.jobs.is_empty() {
-            return;
+            return false;
         }
         let index = self.state.selected().unwrap_or(0);
-        self.state.select(Some(index.saturating_sub(1)));
+        let next = index.saturating_sub(1);
+        self.state.select(Some(next));
+        index != next
     }
 
     fn page_down(&mut self) {
@@ -390,5 +398,19 @@ mod tests {
         view.apply_search();
         assert_eq!(view.jobs.len(), 1);
         assert_eq!(view.jobs[0].id, "1");
+    }
+
+    #[test]
+    fn open_log_action_uses_selected_job_id() {
+        let mut view = HistoryView::new(Some("shelley".to_string()));
+        view.update_jobs(vec![
+            job("1", "gpu-train", "FAILED"),
+            job("2", "align", "COMPLETED"),
+        ]);
+        view.next();
+        match view.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE)) {
+            HistoryAction::OpenLog(job_id) => assert_eq!(job_id, "2"),
+            _ => panic!("expected OpenLog action"),
+        }
     }
 }

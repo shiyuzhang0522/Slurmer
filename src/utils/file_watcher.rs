@@ -90,8 +90,8 @@ impl FileWatcher {
             }
         };
 
-        let (mut content_sender, mut content_receiver) = unbounded::<io::Result<String>>();
-        let (mut refresh_sender, mut refresh_receiver) = unbounded::<()>();
+        let (_, mut content_receiver) = unbounded::<io::Result<String>>();
+        let (mut refresh_sender, mut _refresh_receiver) = unbounded::<()>();
 
         loop {
             select! {
@@ -99,8 +99,11 @@ impl FileWatcher {
                     let Ok(FileWatcherMessage::FilePath(file_path)) = message else {
                         return;
                     };
-                    (content_sender, content_receiver) = unbounded();
-                    (refresh_sender, refresh_receiver) = unbounded();
+                    let (next_content_sender, next_content_receiver) = unbounded();
+                    let (next_refresh_sender, next_refresh_receiver) = unbounded();
+                    content_receiver = next_content_receiver;
+                    refresh_sender = next_refresh_sender;
+                    _refresh_receiver = next_refresh_receiver;
 
                     if let Some(path) = self.file_path.take() {
                         if let Err(error) = watcher.unwatch(&path) {
@@ -113,8 +116,8 @@ impl FileWatcher {
                             Ok(()) => {
                                 self.file_path = Some(path.clone());
                                 let interval = self.interval;
-                                let sender = content_sender.clone();
-                                let receiver = refresh_receiver.clone();
+                                let sender = next_content_sender.clone();
+                                let receiver = _refresh_receiver.clone();
                                 thread::spawn(move || {
                                     FileReader::new(sender, receiver, path, interval).run()
                                 });
