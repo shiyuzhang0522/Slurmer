@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::Line,
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph},
     Frame,
 };
 
@@ -55,12 +55,14 @@ impl SettingsPopup {
         self.visible = true;
     }
 
-    pub fn render(&mut self, frame: &mut Frame, area: Rect, palette: Palette) {
+    pub fn render(&mut self, frame: &mut Frame, area: Rect, _palette: Palette) {
+        let palette = Theme::ALL[self.theme_index].palette();
         frame.render_widget(Clear, area);
         frame.render_widget(
             Block::default()
-                .title(Line::from(" Settings ").centered())
+                .title(Line::from(" Settings · theme preview ").centered())
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(palette.border))
                 .style(Style::default().bg(palette.surface).fg(palette.text)),
             area,
@@ -89,6 +91,7 @@ impl SettingsPopup {
                     Block::default()
                         .title("Theme")
                         .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
                         .border_style(if self.focus == 0 {
                             focus_style
                         } else {
@@ -105,6 +108,7 @@ impl SettingsPopup {
                     Block::default()
                         .title("Auto refresh")
                         .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
                         .border_style(if self.focus == 1 {
                             focus_style
                         } else {
@@ -160,5 +164,35 @@ impl SettingsPopup {
             },
             _ => SettingsAction::None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    #[test]
+    fn choosing_orange_previews_without_applying_until_enter() {
+        let mut popup = SettingsPopup::new(Theme::SakuraLight, 10);
+        assert!(matches!(
+            popup.handle_key(KeyEvent::from(KeyCode::Up)),
+            SettingsAction::None
+        ));
+        let mut terminal = Terminal::new(TestBackend::new(60, 18)).unwrap();
+        terminal
+            .draw(|frame| popup.render(frame, frame.area(), Theme::SakuraLight.palette()))
+            .unwrap();
+        assert_eq!(
+            terminal.backend().buffer()[(1, 1)].bg,
+            Theme::OrangeCream.palette().surface
+        );
+        assert!(matches!(
+            popup.handle_key(KeyEvent::from(KeyCode::Enter)),
+            SettingsAction::Apply {
+                theme: Theme::OrangeCream,
+                refresh_interval: 10
+            }
+        ));
     }
 }

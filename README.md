@@ -1,138 +1,154 @@
 # Slurmer
 
-Slurmer is a fast terminal interface for monitoring and managing SLURM jobs on
-an HPC cluster.
+**English** | [简体中文](README.zh-CN.md)
 
-This fork introduces a cute Sakura Cream interface, fuzzy job search,
-viewport-aware paging, safer log rendering, persistent UI preferences, and
-reliability improvements. It is based on the
-original [wjwei-handsome/Slurmer](https://github.com/wjwei-handsome/Slurmer)
-project.
+A friendly terminal interface for monitoring and managing SLURM jobs on an HPC cluster.
 
-Current version: **0.4.0**
+**Version: 0.5.0**
 
-## What's new in 0.4.0
+## ✨ Useful features
 
-- Added a `sacct`-backed job history popup for recent completed, failed,
-  cancelled, and timed-out jobs
-- Added history filters for concrete job states and 1/7/30 day accounting windows
-- Added fuzzy search and pageable navigation inside the history popup
-- Added stdout/stderr log viewing from selected history jobs
-- Added `h` as the shortcut for opening job accounting history
+| Feature | What you can do | Shortcut |
+| --- | --- | --- |
+| Live monitoring | View your jobs with automatic refresh (default: 10 seconds) | `r` refresh |
+| Search & filters | Fuzzy-search IDs, names, users, partitions, QoS and nodes; filter jobs, including name/node regex | `/` search · `f` filters |
+| Live logs | Follow stdout/stderr, pause to browse, and resume following | `v` |
+| Job scripts | Read the job's script with wrapping and paging | `Enter` |
+| Job history | Explore accounting records over 1, 7 or 30 days, with state filters and search | `h` |
+| Completion emails | Receive one summary when a watched job or entire array finishes | `n` arm · `Shift+n` status |
+| Batch cancellation | Select and cancel multiple jobs after confirmation | `Space` select · `x` cancel |
+| Customizable table | Choose and reorder columns; sort by multiple fields | `c` |
+| Color themes | Preview Orange Cream, Sakura Cream, Dark Neon and Classic | `s` |
 
-## Features
+## 🚀 Installation
 
-- Sakura Cream light theme with blush-pink surfaces and lavender borders
-- Dark Neon and Classic themes remain available
-- Real-time job monitoring with configurable automatic refresh
-- Page Up/Page Down navigation in jobs, logs, and scripts
-- Fuzzy search across job ID, name, user, partition, QoS, and node
-- Filters for user, state, partition, QoS, job name, and node
-- Customizable columns and multi-column sorting
-- Safely sanitized, soft-wrapped job script and stdout/stderr log viewers
-- LIVE log following with PAUSED history browsing and visible page/line ranges
-- `sacct` job accounting history for completed, failed, cancelled, and timed-out jobs
-- Select and cancel one or multiple jobs
-- Persistent theme, refresh interval, column, and sorting preferences
+Run Slurmer on a **Linux HPC login node with access to SLURM**.
 
-## Requirements
+You need:
 
-- A working SLURM installation with `squeue`, `sacct`, `sinfo`, `sacctmgr`,
-  `scontrol`, and `scancel`
-- A Rust toolchain for building from source
+- **Git and stable Rust/Cargo**, plus a working C compiler/linker. Use your cluster's Rust toolchain or follow the [official Rust installation guide](https://rust-lang.org/tools/install/).
+- **SLURM commands:** `squeue`, `sacct`, `sinfo`, `sacctmgr`, `scontrol` and `scancel`.
+- **For email only:** working `sendmail` or `mail` delivery and a SLURM version supporting `sacct --array`.
 
-## Build and install on the HPC
+### Install and launch
 
 ```bash
 git clone https://github.com/shiyuzhang0522/Slurmer.git
 cd Slurmer
-cargo build --release
+cargo install --path . --locked
 ```
 
-The executable is created at:
-
-```text
-target/release/slurmer
-```
-
-For the current HPC installation, add its release directory to `PATH`:
+Cargo builds an optimized executable and installs it to `~/.cargo/bin` by default
+(or `$CARGO_HOME/bin` if configured). Add that directory to your current shell's `PATH`:
 
 ```bash
-echo 'export PATH="/public/home/hpc8301200407/tool/Slurmer/target/release:$PATH"' \
-  >> /public/home/hpc8301200407/.bashrc
-source /public/home/hpc8301200407/.bashrc
+export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
 ```
+
+For future sessions, add the same line to **`~/.bashrc` for Bash** or
+**`~/.zshrc` for Zsh**, then open a new shell or source that file.
 
 Verify and launch:
 
 ```bash
-which slurmer
+slurmer --help
 slurmer
 ```
 
-## Keyboard shortcuts
+### Update
 
-| Key | Action |
-|---|---|
-| <kbd>↑</kbd>/<kbd>↓</kbd> | Navigate jobs |
-| <kbd>Page Up</kbd>/<kbd>Page Down</kbd> | Move by one visible page |
-| <kbd>Ctrl+u</kbd>/<kbd>Ctrl+d</kbd> | Alternative page navigation |
-| <kbd>Shift</kbd> + <kbd>↑</kbd>/<kbd>↓</kbd> | Change jobs in script/log views |
-| <kbd>Space</kbd> | Select or deselect the highlighted job |
-| <kbd>a</kbd> | Select or deselect all displayed jobs |
-| <kbd>/</kbd> | Fuzzy-search loaded jobs |
-| <kbd>f</kbd> | Open job filters |
-| <kbd>s</kbd> | Open theme and refresh settings |
-| <kbd>c</kbd> | Configure columns and sorting |
-| <kbd>Enter</kbd> | View the selected job script |
-| <kbd>v</kbd> | View stdout/stderr logs |
-| <kbd>h</kbd> | View recent `sacct` job history |
-| <kbd>End</kbd> | Resume LIVE following in the log viewer |
-| <kbd>r</kbd> | Refresh the job list |
-| <kbd>x</kbd> | Cancel selected jobs after confirmation |
-| <kbd>Esc</kbd> | Clear search, close a popup, or quit |
-
-Additional controls are displayed inside each popup.
-
-Inside the history popup, press <kbd>f</kbd> to cycle state filters,
-<kbd>t</kbd> to cycle 1/7/30 day ranges, <kbd>/</kbd> to fuzzy-search,
-<kbd>v</kbd> to view stdout/stderr logs for the selected history job,
-<kbd>r</kbd> to refresh, and <kbd>q</kbd>/<kbd>Esc</kbd> to close.
-
-## Configuration
-
-Slurmer automatically detects available partitions and QoS values and uses the
-current username as its default job filter.
-
-Theme, refresh interval, selected columns, and sort order are saved to:
-
-- Linux/macOS: `$XDG_CONFIG_HOME/slurmer/config.toml` or
-  `~/.config/slurmer/config.toml`
-- Windows: `%APPDATA%\slurmer\config.toml`
-
-Job filters and fuzzy-search queries remain session-only. Sakura Cream is the
-default for new configurations. Existing saved Dark Neon or Classic choices
-are preserved, and all themes can be selected by pressing <kbd>s</kbd>.
-
-## Updating the HPC installation
-
-After pulling new changes, rebuild the release executable:
+From your cloned `Slurmer` directory:
 
 ```bash
-cd /public/home/hpc8301200407/tool/Slurmer
-git pull
-cargo build --release
+git pull --ff-only
+cargo install --path . --locked --force
 ```
 
-Because the release directory is already in `PATH`, the updated executable is
-used immediately after a successful rebuild.
+Restart Slurmer to use the updated executable.
+
+## ⌨️ Controls
+
+Use the feature shortcuts above from the main job list. Additional controls:
+
+| Key | Action |
+| --- | --- |
+| `↑` / `↓` | Move through jobs or scroll text |
+| `Page Up` / `Page Down` | Move by one visible page |
+| `Ctrl+u` / `Ctrl+d` | Alternative paging in jobs, scripts, logs and history |
+| `Shift+↑` / `Shift+↓` | Switch jobs while viewing scripts or logs |
+| `Space` | Select/deselect the highlighted job |
+| `a` | Select/deselect all displayed jobs |
+| `Esc` | Clear an active search, close a popup, or quit from the main list |
+
+- **Logs:** `o` switches stdout/stderr; scrolling up pauses following; `End` resumes LIVE mode.
+- **History:** `f` cycles states, `t` cycles 1/7/30-day windows, `/` searches, `v` opens logs and `r` refreshes.
+- **Settings:** `←` / `→` switches fields, `↑` / `↓` chooses an option, `Enter` applies and saves.
+
+Script and log viewing requires readable files. Historical logs also depend on
+job metadata still being available through `scontrol`.
+
+## 📬 Completion emails
+
+**Set your recipient before enabling notifications**, then launch Slurmer:
+
+```bash
+export SLURMER_EMAIL="you@example.com"
+slurmer
+```
+
+If unset, the built-in recipient is **shiyuzhang0522@gmail.com**.
+
+Highlight any array task, such as `12345_7`, and press **`n`** to watch the entire
+parent array **`12345`**, including tasks hidden by filters. Ordinary jobs work
+too. Press **`Shift+n`** to see notification status and errors. Watches are
+opt-in per parent job; pressing `n` again does not add a duplicate in that UI session.
+
+Slurmer checks every **30 seconds** and waits for stable completion records
+before sending a summary of task states and up to 50 unsuccessful task IDs with
+exit codes. “Finished” includes failures and cancellations, not just success;
+accounting delays can postpone the email.
+
+### Keep watching after disconnecting
+
+**UI watches stop when Slurmer exits and are not restored on restart.** To watch
+independently of the UI or SSH session, use the following on the HPC, if your
+site permits background monitoring. Replace `12345` with your job or array ID;
+the process inherits `SLURMER_EMAIL` set above.
+
+```bash
+nohup slurmer --watch 12345 > slurmer-watch-12345.log 2>&1 < /dev/null &
+```
+
+The watcher sends one summary and exits. Read the log for status; terminate the
+process to stop watching. Run **one watcher per parent job**: separate processes
+and restarted watchers do not share delivery history and can send duplicates.
+Exit the UI to stop its watches before switching to standalone monitoring.
+
+### Mail delivery
+
+Slurmer uses `sendmail`, falling back to `mail` only when sendmail is absent.
+Your HPC must already support external mail delivery; no Gmail password is needed.
+Mailer acceptance does not guarantee inbox delivery—check spam or contact your
+HPC administrator if mail does not arrive. SLURM query errors are retried;
+mail delivery errors stop the watch. Check the local mail queue before retrying
+to avoid duplicate messages.
+
+## 🎨 Preferences
+
+Press **`s`** to preview themes and set the refresh interval. **Orange Cream** is
+the default for new configurations; existing saved theme choices are preserved.
+Slurmer defaults to your current username and discovers available partitions and QoS values.
+
+Theme, refresh interval, columns and sort order are saved automatically:
+
+- **Linux/macOS:** `$XDG_CONFIG_HOME/slurmer/config.toml`, or `~/.config/slurmer/config.toml` when unset.
+- **Windows:** `%APPDATA%\slurmer\config.toml`.
+
+Filters and search queries last only for the current session. The email recipient
+is configured through `SLURMER_EMAIL`, not the preferences file.
 
 ## License and attribution
 
-Fork maintained by Shelley. Original project copyright (c) wjwei-handsome
-<weiwenjie@westlake.edu.cn>.
-
-This project is licensed under the MIT license ([LICENSE] or
-<http://opensource.org/licenses/MIT>).
-
-[LICENSE]: ./LICENSE
+Licensed under the [MIT License](LICENSE). This fork is maintained by Shelley
+and based on [wjwei-handsome/Slurmer](https://github.com/wjwei-handsome/Slurmer).
+Original copyright © wjwei-handsome (<weiwenjie@westlake.edu.cn>).

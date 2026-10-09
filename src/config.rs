@@ -21,7 +21,7 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
-            theme: Theme::SakuraLight,
+            theme: Theme::OrangeCream,
             refresh_interval: 10,
             selected_columns: JobColumn::defaults(),
             sort_columns: vec![SortColumn {

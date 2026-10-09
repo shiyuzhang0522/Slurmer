@@ -4,16 +4,23 @@ use crate::slurm::JobState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Theme {
+    OrangeCream,
     SakuraLight,
     DarkNeon,
     Classic,
 }
 
 impl Theme {
-    pub const ALL: [Theme; 3] = [Theme::SakuraLight, Theme::DarkNeon, Theme::Classic];
+    pub const ALL: [Theme; 4] = [
+        Theme::OrangeCream,
+        Theme::SakuraLight,
+        Theme::DarkNeon,
+        Theme::Classic,
+    ];
 
     pub fn id(self) -> &'static str {
         match self {
+            Theme::OrangeCream => "orange-cream",
             Theme::SakuraLight => "sakura-light",
             Theme::DarkNeon => "dark-neon",
             Theme::Classic => "classic",
@@ -22,6 +29,7 @@ impl Theme {
 
     pub fn label(self) -> &'static str {
         match self {
+            Theme::OrangeCream => "Orange Cream",
             Theme::SakuraLight => "Sakura Cream",
             Theme::DarkNeon => "Dark Neon",
             Theme::Classic => "Classic",
@@ -30,6 +38,7 @@ impl Theme {
 
     pub fn from_id(value: &str) -> Option<Self> {
         match value {
+            "orange-cream" => Some(Theme::OrangeCream),
             "sakura-light" => Some(Theme::SakuraLight),
             "dark-neon" => Some(Theme::DarkNeon),
             "classic" => Some(Theme::Classic),
@@ -39,6 +48,20 @@ impl Theme {
 
     pub fn palette(self) -> Palette {
         match self {
+            Theme::OrangeCream => Palette {
+                background: Color::Rgb(255, 250, 240),
+                surface: Color::Rgb(255, 235, 211),
+                surface_alt: Color::Rgb(255, 215, 173),
+                text: Color::Rgb(91, 47, 27),
+                muted: Color::Rgb(139, 91, 59),
+                accent: Color::Rgb(193, 79, 15),
+                accent_alt: Color::Rgb(166, 84, 104),
+                border: Color::Rgb(222, 145, 76),
+                success: Color::Rgb(52, 119, 74),
+                warning: Color::Rgb(154, 96, 8),
+                danger: Color::Rgb(184, 49, 58),
+                info: Color::Rgb(62, 105, 148),
+            },
             Theme::SakuraLight => Palette {
                 background: Color::Rgb(255, 249, 242),
                 surface: Color::Rgb(255, 232, 238),

@@ -8,3 +8,5 @@ pub mod logview;
 pub mod settings;
 pub mod text_view;
 pub mod theme;
+
+pub mod notifications;

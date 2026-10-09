@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, BorderType, Borders, Paragraph, Wrap},
     Frame,
 };
 use std::time::Duration;
@@ -19,7 +19,7 @@ pub fn draw_main_layout(frame: &mut Frame) -> Vec<Rect> {
         .constraints([
             Constraint::Length(3), // Header area with status
             Constraint::Min(10),   // Main content area
-            Constraint::Length(3), // Footer area with controls
+            Constraint::Length(if size.width >= 110 { 5 } else { 6 }), // Wrapped controls
         ])
         .split(size);
 
@@ -42,21 +42,22 @@ pub fn draw_header(
     let header_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(20), // Title
-            Constraint::Percentage(80), // Status
+            Constraint::Length(22), // Title
+            Constraint::Min(0),     // Status
         ])
         .split(area);
 
     // Render the title part
     let title = Paragraph::new(Text::from(vec![Line::from(vec![
-        Span::styled("SLURMER", Style::default().fg(palette.accent).bold()),
-        Span::raw(" - "),
-        Span::styled("HPC job console", Style::default().fg(palette.accent_alt)),
+        Span::styled("(o) SLURMER", Style::default().fg(palette.accent).bold()),
+        Span::raw(" "),
+        Span::styled("HPC", Style::default().fg(palette.accent_alt)),
     ])]))
     .style(Style::default().bg(palette.surface).fg(palette.text))
     .block(
         Block::default()
             .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(palette.border)),
     );
 
@@ -77,6 +78,7 @@ pub fn draw_header(
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(palette.border)),
         )
         .style(Style::default().bg(palette.surface).fg(palette.text));
@@ -97,6 +99,8 @@ pub fn draw_footer(
         ("Esc", "Quit"),
         ("/", "Search"),
         ("s", "Settings"),
+        ("n", "Email"),
+        ("N", "Email status"),
         ("↑/↓", "Navigate"),
         ("PgUp/Dn", "Page"),
         ("Space", "Select"),
@@ -140,10 +144,12 @@ pub fn draw_footer(
     ));
 
     let footer = Paragraph::new(Line::from(footer_text))
+        .wrap(Wrap { trim: true })
         .style(Style::default().bg(palette.surface).fg(palette.text))
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(palette.border)),
         );
 
@@ -169,4 +175,35 @@ pub fn centered_popup_area(frame_size: Rect, percent_x: u16, percent_y: u16) -> 
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::theme::Theme;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    #[test]
+    fn notification_shortcuts_fit_standard_terminal() {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| {
+                let areas = draw_main_layout(frame);
+                let palette = Theme::OrangeCream.palette();
+                draw_header(frame, areas[0], "Ready", Duration::ZERO, 10, None, palette);
+                draw_footer(frame, areas[2], (2, 3, 1), palette);
+            })
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains("n: Email"));
+        assert!(text.contains("N: Email status"));
+        assert!(text.contains("Cancel"));
+        assert!(text.contains("Other[ 1 ]"));
+    }
 }

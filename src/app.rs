@@ -13,6 +13,7 @@ use tokio::runtime::Runtime;
 
 use crate::{
     config::Preferences,
+    notifications::Notifications,
     slurm::{
         command::{execute_scancel, get_partitions, get_qos},
         sacct::run_sacct,
@@ -27,6 +28,7 @@ use crate::{
         jobslist::JobsList,
         layout::{centered_popup_area, draw_footer, draw_header, draw_main_layout},
         logview::LogView,
+        notifications::NotificationView,
         settings::{SettingsAction, SettingsPopup},
         theme::{Palette, Theme},
     },
@@ -80,6 +82,8 @@ pub struct App {
     settings_popup: SettingsPopup,
     history_view: HistoryView,
     theme: Theme,
+    notifications: Notifications,
+    notification_view: NotificationView,
     search_mode: bool,
     search_query: String,
     filter_backup: Option<SqueueOptions>,
@@ -139,6 +143,8 @@ impl App {
             settings_popup: SettingsPopup::new(theme, job_refresh_interval),
             history_view: HistoryView::new(Some(username)),
             theme,
+            notifications: Notifications::new(),
+            notification_view: NotificationView::default(),
             search_mode: false,
             search_query: String::new(),
             filter_backup: None,
@@ -347,6 +353,12 @@ impl App {
             self.settings_popup.render(frame, popup_area, palette);
         }
 
+        if self.notification_view.visible {
+            let area = centered_popup_area(frame.area(), 85, 65);
+            self.notification_view
+                .render(frame, area, self.notifications.status_lines(), palette);
+        }
+
         if self.search_mode {
             let popup_area = Rect::new(
                 frame.area().x + frame.area().width / 5,
@@ -455,6 +467,11 @@ impl App {
             }
         };
 
+        let status_text = format!(
+            "{status_text} | Email watches: {}",
+            self.notifications.count()
+        );
+
         // Draw the header with status information
         draw_header(
             frame,
@@ -538,6 +555,10 @@ impl App {
 
     /// Handle key events
     fn handle_key_event(&mut self, key: KeyEvent) {
+        if self.notification_view.visible {
+            self.notification_view.handle_key(key);
+            return;
+        }
         if self.search_mode {
             match key.code {
                 KeyCode::Esc => {
@@ -676,6 +697,38 @@ impl App {
                     && !self.cancel_confirm =>
             {
                 self.search_mode = true;
+            }
+
+            (_, KeyCode::Char('N'))
+                if !self.filter_popup.visible
+                    && !self.script_view.visible
+                    && !self.columns_popup.visible
+                    && !self.log_view.visible
+                    && !self.cancel_confirm =>
+            {
+                self.notification_view.open();
+            }
+
+            (_, KeyCode::Char('n'))
+                if !self.filter_popup.visible
+                    && !self.script_view.visible
+                    && !self.columns_popup.visible
+                    && !self.log_view.visible
+                    && !self.cancel_confirm =>
+            {
+                if let Some(id) = self.jobs_list.selected_job().map(|job| job.id.clone()) {
+                    match self.notifications.start(&id) {
+                        Ok(message) => self.set_status_message(message, 15),
+                        Err(error) => {
+                            self.set_status_message(format!("Cannot arm email: {error}"), 15)
+                        }
+                    }
+                } else {
+                    self.set_status_message(
+                        "Select a job to arm an array completion email".into(),
+                        5,
+                    );
+                }
             }
 
             (_, KeyCode::Char('s'))
@@ -985,6 +1038,9 @@ impl App {
 
     /// Handle tick events (called periodically)
     fn handle_tick(&mut self) {
+        for message in self.notifications.messages() {
+            self.set_status_message(message, 15);
+        }
         // Check if it's time to auto-refresh
         if !self.filter_popup.visible
             && !self.script_view.visible
@@ -1120,14 +1176,15 @@ impl App {
         //     self.selected_columns = JobColumn::defaults();
         // }
 
-        // Generate format string for squeue based on column selection
-        let format_string = self
-            .selected_columns
-            .iter()
-            .map(|col| col.format_code())
-            .collect::<Vec<&str>>()
-            .join("|");
-        self.squeue_options.format = format_string;
+        // Keep action IDs and search/filter fields available even when their columns are hidden.
+        self.squeue_options.format = crate::slurm::squeue::with_required_fields(
+            &self
+                .selected_columns
+                .iter()
+                .map(JobColumn::format_code)
+                .collect::<Vec<_>>()
+                .join("|"),
+        );
 
         // Build sort string based on sort columns
         // remove any existing sort columns

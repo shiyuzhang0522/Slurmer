@@ -119,6 +119,20 @@ impl SqueueOptions {
     }
 }
 
+/// Presentation choices must not remove identifiers or fields used by search and actions.
+pub fn with_required_fields(format: &str) -> String {
+    let mut fields: Vec<_> = format
+        .split('|')
+        .filter(|field| !field.is_empty())
+        .collect();
+    for required in ["%i", "%j", "%u", "%T", "%P", "%q", "%N"] {
+        if !fields.contains(&required) {
+            fields.push(required);
+        }
+    }
+    fields.join("|")
+}
+
 pub async fn run_squeue(options: &SqueueOptions) -> Result<Vec<Job>> {
     let args = options.to_args();
     // eprintln!("Running squeue with args: {:?}", args);
@@ -258,6 +272,16 @@ fn parse_squeue_text(stdout: &str, format: &str) -> Vec<Job> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hidden_columns_keep_ids_search_and_filter_fields() {
+        let format = with_required_fields("%j");
+        let jobs = parse_squeue_text("train|123_4|shelley|RUNNING|gpu|normal|node01", &format);
+        assert_eq!(jobs[0].id, "123_4");
+        assert_eq!(jobs[0].node.as_deref(), Some("node01"));
+        assert!(crate::search::job_score("123_4", &jobs[0]).is_some());
+        assert_eq!(format.matches("%j").count(), 1);
+    }
 
     #[test]
     fn sort_arguments_preserve_priority_order() {

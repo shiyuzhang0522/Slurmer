@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use ratatui::{
     layout::{Constraint, Rect},
     style::{Modifier, Style},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
+    widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table, TableState},
     Frame,
 };
 
@@ -223,6 +223,7 @@ impl JobsList {
                     Block::default()
                         .title("Warning")
                         .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
                         .border_style(Style::default().fg(palette.border)),
                 );
             frame.render_widget(warning, area);
@@ -374,6 +375,7 @@ impl JobsList {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
                     .title(title)
                     .border_style(Style::default().fg(palette.border))
                     .style(Style::default().bg(palette.background)),
